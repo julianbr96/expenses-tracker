@@ -19,6 +19,12 @@ export function compareMonth(a: string, b: string): number {
   return a < b ? -1 : 1;
 }
 
+export function monthDiff(startMonth: string, endMonth: string): number {
+  const start = monthToDate(startMonth);
+  const end = monthToDate(endMonth);
+  return (end.getUTCFullYear() - start.getUTCFullYear()) * 12 + (end.getUTCMonth() - start.getUTCMonth());
+}
+
 export function isMonthInRange(month: string, startMonth: string, endMonth?: string | null): boolean {
   if (compareMonth(month, startMonth) < 0) return false;
   if (endMonth && compareMonth(month, endMonth) > 0) return false;

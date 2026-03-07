@@ -70,6 +70,7 @@ export interface ProjectionInput {
   exchangeRates: ExchangeRateRecord[];
   monthlyAdjustments?: MonthlyAdjustmentRecord[];
   advancements?: AdvancementRecord[];
+  startMonth?: string;
   monthsAhead?: number;
   startFromCurrentMonth?: boolean;
 }
@@ -99,6 +100,7 @@ export interface ProjectionOutput {
   };
   paymentMonth: string;
   currentRateArsPerUsd: number;
+  startMonth: string;
 }
 
 function round2(value: number): number {
@@ -262,7 +264,8 @@ export function generateProjection(input: ProjectionInput): ProjectionOutput {
   const adjustmentsByMonth = sumAdjustmentsByMonth(input.monthlyAdjustments ?? [], rateLookup);
   const advancementRepaymentsByMonth = sumAdvancementRepaymentsByMonth(input.advancements ?? [], rateLookup);
 
-  const firstMonth = input.startFromCurrentMonth === false ? addMonths(currentMonth, -2) : currentMonth;
+  const defaultStartMonth = input.startFromCurrentMonth === false ? addMonths(currentMonth, -2) : currentMonth;
+  const firstMonth = input.startMonth ?? defaultStartMonth;
 
   const rows: ProjectionRow[] = [];
   let savings = 0;
@@ -333,6 +336,7 @@ export function generateProjection(input: ProjectionInput): ProjectionOutput {
       nextCardPaymentArs: round2((nextMonthRow?.cardPaymentUsd ?? 0) * currentRateArsPerUsd)
     },
     paymentMonth,
-    currentRateArsPerUsd
+    currentRateArsPerUsd,
+    startMonth: firstMonth
   };
 }

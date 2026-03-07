@@ -15,6 +15,12 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  overflow-x: hidden;
+  overscroll-behavior-x: none;
+}
+
 body {
   margin: 0;
   color: var(--ink);
@@ -25,12 +31,15 @@ body {
     radial-gradient(circle at 50% 120%, rgba(120, 171, 255, 0.22), transparent 45%),
     linear-gradient(180deg, #f7f3ea 0%, #f2ecde 100%);
   min-height: 100vh;
+  width: 100%;
+  max-width: 100%;
 }
 
 .container {
   width: min(96vw, 1840px);
   margin: 0 auto;
   padding: 28px;
+  overflow-x: clip;
 }
 
 .header {
@@ -49,6 +58,7 @@ body {
 .header p {
   margin: 8px 0 0;
   color: rgba(255, 255, 255, 0.86);
+  overflow-wrap: anywhere;
 }
 
 .tabs {
@@ -64,6 +74,20 @@ body {
   align-items: center;
   gap: 12px;
   margin: 22px 0;
+}
+
+.mobileTopBar {
+  display: none;
+}
+
+.toolbarRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.logoutBtn {
+  white-space: nowrap;
 }
 
 .currencyToggle {
@@ -93,6 +117,28 @@ body {
 .currencyToggle button.active {
   color: #fff;
   background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+}
+
+.actionSwitcher {
+  gap: 6px;
+}
+
+.menuToggleBtn {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  min-height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: rgba(255, 255, 255, 0.58);
+  color: var(--ink);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+}
+
+.logoutInlineBtn {
+  min-width: 110px;
 }
 
 .tabs button {
@@ -236,16 +282,24 @@ ul {
   margin-top: 0;
 }
 
+.forecastActions {
+  margin-bottom: 10px;
+}
+
 .formGrid {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   margin-bottom: 12px;
+  align-items: end;
 }
 
 .fieldLabel {
   display: grid;
   gap: 4px;
+  align-content: end;
+  width: 100%;
+  grid-template-rows: auto minmax(42px, auto);
 }
 
 .fieldLabel span {
@@ -260,6 +314,33 @@ button {
   border: 1px solid var(--line);
   padding: 9px;
   font: inherit;
+  min-height: 42px;
+  height: 42px;
+  line-height: 1.2;
+}
+
+.formGrid > input,
+.formGrid > select,
+.formGrid > button,
+.formGrid > .fieldLabel {
+  width: 100%;
+}
+
+.fieldLabel input,
+.fieldLabel select {
+  width: 100%;
+}
+
+input[type="month"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 42px;
+}
+
+input[type="date"] {
+  -webkit-appearance: none;
+  appearance: none;
+  min-height: 42px;
 }
 
 input,
@@ -275,6 +356,11 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 button.secondary {
   background: #465268;
 }
@@ -288,12 +374,123 @@ table {
   border-collapse: collapse;
 }
 
+.mobileOnly {
+  display: none;
+}
+
+.desktopTable {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.mobileCard {
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 12px;
+  padding: 12px;
+  margin-bottom: 10px;
+  background: rgba(255, 255, 255, 0.34);
+  backdrop-filter: blur(8px);
+}
+
+.mobileCard h3 {
+  margin: 0 0 4px;
+}
+
+.mobileMain {
+  margin: 0;
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.mobileInline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.bottomTabs {
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  z-index: 40;
+  display: none;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 18px;
+  border: 1px solid rgba(255, 255, 255, 0.62);
+  background: linear-gradient(140deg, rgba(255, 255, 255, 0.45), rgba(245, 240, 231, 0.2));
+  backdrop-filter: blur(18px) saturate(155%);
+  box-shadow: 0 16px 34px rgba(24, 22, 18, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  overflow: clip;
+  contain: paint;
+}
+
+.bottomTabs button {
+  flex: 1;
+  min-width: 0;
+  border-radius: 12px;
+  padding: 8px 6px;
+  font-size: 0.72rem;
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid transparent;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  transition: transform 120ms ease, background 120ms ease, box-shadow 120ms ease;
+}
+
+.bottomTabs button:active {
+  transform: scale(0.95) translateY(1px);
+  box-shadow: inset 0 0 0 1px rgba(17, 72, 63, 0.18);
+}
+
+.bottomTabs button.active {
+  color: #fff;
+  background: linear-gradient(135deg, var(--brand), var(--brand-deep));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 8px 16px rgba(17, 72, 63, 0.3);
+  animation: tabPulse 280ms ease;
+}
+
+.bottomTabIcon {
+  font-size: 0.95rem;
+  line-height: 1;
+  opacity: 0.95;
+}
+
 th,
 td {
   text-align: left;
   border-bottom: 1px solid #e9dfcb;
   padding: 10px 8px;
   white-space: nowrap;
+}
+
+.desktopTable th,
+.desktopTable td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.desktopTable td input,
+.desktopTable td select {
+  width: 100%;
+  max-width: 100%;
+}
+
+.forecastTable th:nth-child(6),
+.forecastTable td:nth-child(6) {
+  min-width: 150px;
+}
+
+.forecastTable th:nth-child(10),
+.forecastTable td:nth-child(10) {
+  width: 96px;
 }
 
 th {
@@ -339,6 +536,13 @@ th {
   margin: 56px auto;
 }
 
+.authLoading {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 18px 8px;
+}
+
 @media (max-width: 980px) {
   .grid4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -355,6 +559,13 @@ th {
 }
 
 @media (max-width: 640px) {
+  html,
+  body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
   body {
     font-size: 15px;
   }
@@ -362,6 +573,18 @@ th {
   .container {
     padding: 12px;
     width: 100%;
+    max-width: 100%;
+    padding-bottom: 94px;
+    overflow-x: hidden;
+  }
+
+  .header,
+  .toolbar,
+  .sectionWrap,
+  .stack,
+  .grid4,
+  .panel {
+    max-width: 100%;
   }
 
   .header {
@@ -379,13 +602,11 @@ th {
   .panel {
     padding: 12px;
     border-radius: 14px;
+    overflow-x: hidden;
   }
 
   .tabs {
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    padding-bottom: 4px;
+    display: none;
   }
 
   .tabs button {
@@ -395,6 +616,20 @@ th {
   .currencyToggle {
     width: 100%;
     justify-content: center;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .toolbarRight {
+    width: 100%;
+    gap: 6px;
+    min-width: 0;
+    flex-wrap: wrap;
+    justify-content: space-between;
+  }
+
+  .logoutBtn {
+    flex: 0 0 auto;
   }
 
   .currencyToggle button {
@@ -412,7 +647,6 @@ th {
   }
 
   table {
-    min-width: 680px;
     font-size: 0.9rem;
   }
 
@@ -438,10 +672,60 @@ th {
   .inlineForm {
     grid-template-columns: 1fr;
   }
+
+  .desktopOnly {
+    display: none;
+  }
+
+  .mobileOnly {
+    display: block;
+    width: 100%;
+  }
+
+  .mobileTopBar {
+    display: grid;
+    gap: 8px;
+    margin-top: 10px;
+    margin-bottom: 12px;
+    max-width: 100%;
+    overflow: hidden;
+    align-items: center;
+  }
+
+  .mobileTopBar .actionSwitcher {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .mobileTopBar .logoutInlineBtn {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .bottomTabs {
+    display: flex;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-width: none;
+    overflow: hidden;
+    box-shadow: 0 10px 22px rgba(24, 22, 18, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.5);
+  }
 }
 
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes tabPulse {
+  0% {
+    transform: scale(0.92);
+    filter: saturate(130%);
+  }
+  100% {
+    transform: scale(1);
+    filter: saturate(100%);
   }
 }

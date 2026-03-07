@@ -2,14 +2,32 @@ import { generateProjection } from "@/lib/finance";
 import { appEnv } from "@/lib/env";
 import { loadModelForProjection } from "@/lib/load-model";
 import { prisma } from "@/lib/db";
+import { addMonths, monthDiff, toMonthKey } from "@/lib/time";
 import { NextResponse } from "next/server";
 
 export async function GET() {
   const model = await loadModelForProjection();
+  const currentMonth = toMonthKey(new Date());
+
+  const candidateMonths = [
+    ...model.expenses.map((row) => row.date.slice(0, 7)),
+    ...model.incomes.map((row) => row.startMonth),
+    ...model.fixedExpenses.map((row) => row.startMonth),
+    ...model.expectations.map((row) => row.month),
+    ...(model.monthlyAdjustments ?? []).map((row) => row.month),
+    ...(model.advancements ?? []).map((row) => row.month)
+  ];
+
+  const earliestDataMonth = candidateMonths.length > 0 ? candidateMonths.reduce((min, month) => (month < min ? month : min)) : currentMonth;
+  const startMonth = addMonths(earliestDataMonth, -1);
+  const monthsUntilCurrent = Math.max(0, monthDiff(startMonth, currentMonth));
+  const totalMonths = monthsUntilCurrent + appEnv.projectionMonthsAhead;
+
   const projection = generateProjection({
     ...model,
-    monthsAhead: appEnv.projectionMonthsAhead,
-    startFromCurrentMonth: true
+    startMonth,
+    monthsAhead: totalMonths,
+    startFromCurrentMonth: false
   });
 
   const [cards, expenses, incomes, fixedExpenses, expectations, exchangeRates, monthlyAdjustments, advancements] = await Promise.all([

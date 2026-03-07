@@ -4,6 +4,13 @@ import { useEffect, useMemo, useState } from "react";
 
 type Currency = "USD" | "ARS";
 type Tab = "dashboard" | "tracker" | "expenses" | "forecast" | "settings";
+const MOBILE_TABS: Array<{ id: Tab; label: string; icon: string }> = [
+  { id: "dashboard", label: "Home", icon: "◉" },
+  { id: "tracker", label: "Cards", icon: "◈" },
+  { id: "expenses", label: "Expenses", icon: "◎" },
+  { id: "forecast", label: "Forecast", icon: "◌" },
+  { id: "settings", label: "Settings", icon: "◍" }
+];
 
 interface Card {
   id: string;
@@ -90,6 +97,7 @@ interface ProjectionData {
   currentMonth: string;
   paymentMonth: string;
   currentRateArsPerUsd: number;
+  startMonth: string;
   rows: ProjectionRow[];
   cardTracker: {
     cardId: string;
@@ -167,8 +175,19 @@ function api<T>(url: string, options?: RequestInit): Promise<T> {
   });
 }
 
-function isPastOrCurrentMonth(month: string, currentMonth: string): boolean {
-  return month <= currentMonth;
+function shiftMonth(month: string, delta: number): string {
+  const date = new Date(`${month}-01T00:00:00.000Z`);
+  date.setUTCMonth(date.getUTCMonth() + delta);
+  const year = date.getUTCFullYear();
+  const mm = String(date.getUTCMonth() + 1).padStart(2, "0");
+  return `${year}-${mm}`;
+}
+
+function triggerHaptic() {
+  if (typeof navigator === "undefined") return;
+  if ("vibrate" in navigator) {
+    navigator.vibrate(8);
+  }
 }
 
 export function FinanceApp() {
@@ -181,6 +200,10 @@ export function FinanceApp() {
   const [authRequired, setAuthRequired] = useState(false);
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
+  const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [topActionMode, setTopActionMode] = useState<"currency" | "menu">("currency");
+  const [loaderStatus, setLoaderStatus] = useState("Starting...");
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [editingIncomeId, setEditingIncomeId] = useState<string | null>(null);
@@ -190,6 +213,7 @@ export function FinanceApp() {
 
   const [adjustmentDrafts, setAdjustmentDrafts] = useState<Record<string, string>>({});
   const [debouncedAdjustmentDrafts, setDebouncedAdjustmentDrafts] = useState<Record<string, string>>({});
+  const [visiblePastMonths, setVisiblePastMonths] = useState(3);
 
   const [expenseFilterCard, setExpenseFilterCard] = useState<string>("all");
   const [expenseFilterMonth, setExpenseFilterMonth] = useState<string>("all");
@@ -236,11 +260,14 @@ export function FinanceApp() {
   });
 
   async function fetchBootstrap() {
+    console.info("[loader] fetching bootstrap data");
+    setLoaderStatus("Loading latest data...");
     const payload = await api<Bootstrap>("/api/projections");
     setAuthRequired(false);
     setData(payload);
     setAdjustmentDrafts(Object.fromEntries(payload.monthlyAdjustments.map((row) => [row.month, String(row.amount)])));
     setDebouncedAdjustmentDrafts(Object.fromEntries(payload.monthlyAdjustments.map((row) => [row.month, String(row.amount)])));
+    setVisiblePastMonths(3);
 
     if (!expenseForm.cardId && payload.cards[0]) {
       setExpenseForm((prev) => ({ ...prev, cardId: payload.cards[0].id }));
@@ -252,6 +279,8 @@ export function FinanceApp() {
 
   async function runTabAction(tab: Tab, action: () => Promise<void>) {
     setBusyTab(tab);
+    setLoaderStatus(`Applying changes in ${tab}...`);
+    console.info(`[loader] running action for tab=${tab}`);
     try {
       await action();
       await fetchBootstrap();
@@ -308,11 +337,12 @@ export function FinanceApp() {
 
   const forecastRows = useMemo(() => {
     if (!data) return [];
+    const editableMonths = new Set([data.projection.currentMonth, shiftMonth(data.projection.currentMonth, -1)]);
 
     let savings = 0;
     return data.projection.rows.map((row) => {
       let adjustment = row.manualAdjustmentUsd;
-      const editable = isPastOrCurrentMonth(row.month, data.projection.currentMonth);
+      const editable = editableMonths.has(row.month);
       if (editable && row.month in debouncedAdjustmentDrafts) {
         const raw = debouncedAdjustmentDrafts[row.month];
         if (raw.trim() === "") {
@@ -334,18 +364,51 @@ export function FinanceApp() {
     });
   }, [data, debouncedAdjustmentDrafts]);
 
+  const displayedForecastRows = useMemo(() => {
+    if (!data) return [];
+    const currentIndex = forecastRows.findIndex((row) => row.month === data.projection.currentMonth);
+    if (currentIndex === -1) return forecastRows;
+    const start = Math.max(0, currentIndex - visiblePastMonths);
+    return forecastRows.slice(start);
+  }, [data, forecastRows, visiblePastMonths]);
+
   async function submitAuth(event: React.FormEvent) {
     event.preventDefault();
     setAuthError(null);
+    setIsAuthSubmitting(true);
+    setLoaderStatus("Authenticating...");
+    console.info("[auth] submitting password");
     try {
       await api("/api/auth/verify", {
         method: "POST",
         body: JSON.stringify({ password: authPassword })
       });
       setAuthPassword("");
+      console.info("[auth] success");
       await fetchBootstrap();
     } catch (err) {
+      console.info("[auth] failed");
       setAuthError(err instanceof Error ? err.message : "Invalid password");
+    } finally {
+      setIsAuthSubmitting(false);
+    }
+  }
+
+  async function logout() {
+    setIsLoggingOut(true);
+    setBusyTab(activeTab);
+    setLoaderStatus("Logging out...");
+    console.info("[auth] logging out");
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+    } finally {
+      setData(null);
+      setAuthRequired(true);
+      setAuthPassword("");
+      setBusyTab(null);
+      setInitialLoading(false);
+      setLoaderStatus("Logged out");
+      setIsLoggingOut(false);
     }
   }
 
@@ -360,6 +423,35 @@ export function FinanceApp() {
     const primary = displayCurrency === "USD" ? USD_FORMAT.format(usdValue) : ARS_FORMAT.format(arsValue);
     const secondary = displayCurrency === "USD" ? ARS_FORMAT.format(arsValue) : USD_FORMAT.format(usdValue);
     return { primary, secondary };
+  }
+
+  function renderTopActionSwitcher() {
+    return (
+      <div className="currencyToggle actionSwitcher">
+        {topActionMode === "currency" ? (
+          <>
+            <span>Currency</span>
+            <button className={displayCurrency === "USD" ? "active" : ""} onClick={() => setDisplayCurrency("USD")}>USD</button>
+            <button className={displayCurrency === "ARS" ? "active" : ""} onClick={() => setDisplayCurrency("ARS")}>ARS</button>
+          </>
+        ) : (
+          <>
+            <span>Menu</span>
+            <button className="secondary logoutInlineBtn" disabled={isLoggingOut} onClick={() => void logout()}>
+              {isLoggingOut ? "Logging out..." : "Logout"}
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          className="menuToggleBtn"
+          onClick={() => setTopActionMode((prev) => (prev === "currency" ? "menu" : "currency"))}
+          aria-label="Toggle quick actions"
+        >
+          {topActionMode === "currency" ? "⚙" : "←"}
+        </button>
+      </div>
+    );
   }
 
   async function submitExpense(event: React.FormEvent) {
@@ -587,7 +679,17 @@ export function FinanceApp() {
   }
 
   if (initialLoading) {
-    return <main className="container">Loading...</main>;
+    return (
+      <main className="container">
+        <section className="panel authPanel">
+          <div className="authLoading">
+            <div className="spinner" />
+            <h2>Loading</h2>
+            <p>{loaderStatus}</p>
+          </div>
+        </section>
+      </main>
+    );
   }
 
   if (authRequired) {
@@ -596,15 +698,19 @@ export function FinanceApp() {
         <section className="panel authPanel">
           <h2>Locked</h2>
           <p>Enter your app password to continue.</p>
+          <p className="subtle">{loaderStatus}</p>
           <form className="formGrid" onSubmit={submitAuth}>
             <input
               type="password"
               placeholder="Password"
               value={authPassword}
               onChange={(event) => setAuthPassword(event.target.value)}
+              disabled={isAuthSubmitting}
               required
             />
-            <button type="submit">Unlock</button>
+            <button type="submit" disabled={isAuthSubmitting}>
+              {isAuthSubmitting ? "Unlocking..." : "Unlock"}
+            </button>
           </form>
           {authError ? <p className="error">{authError}</p> : null}
         </section>
@@ -645,7 +751,7 @@ export function FinanceApp() {
         <p>Track expenses now, project next-month cash impact, and reconcile real closes.</p>
       </header>
 
-      <div className="toolbar">
+      <div className="toolbar desktopOnly">
         <div className="tabs">
           <button className={activeTab === "dashboard" ? "active" : ""} onClick={() => setActiveTab("dashboard")}>Dashboard</button>
           <button className={activeTab === "tracker" ? "active" : ""} onClick={() => setActiveTab("tracker")}>Credit Card Tracker</button>
@@ -653,20 +759,18 @@ export function FinanceApp() {
           <button className={activeTab === "forecast" ? "active" : ""} onClick={() => setActiveTab("forecast")}>Forecast</button>
           <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>Settings</button>
         </div>
-        {activeTab !== "settings" ? (
-          <div className="currencyToggle">
-            <span>Currency</span>
-            <button className={displayCurrency === "USD" ? "active" : ""} onClick={() => setDisplayCurrency("USD")}>USD</button>
-            <button className={displayCurrency === "ARS" ? "active" : ""} onClick={() => setDisplayCurrency("ARS")}>ARS</button>
-          </div>
-        ) : null}
+        <div className="toolbarRight">{renderTopActionSwitcher()}</div>
+      </div>
+
+      <div className="mobileOnly mobileTopBar">
+        {renderTopActionSwitcher()}
       </div>
 
       <div className={`sectionWrap ${busyTab === activeTab ? "isBusy" : ""}`}>
         {busyTab === activeTab && (
           <div className="busyOverlay">
             <div className="spinner" />
-            <span>Updating...</span>
+            <span>{loaderStatus}</span>
           </div>
         )}
 
@@ -701,7 +805,7 @@ export function FinanceApp() {
               Current Spending Cycle ({toMonthLabel(data.projection.currentMonth)}) · Paid on 1st of {toMonthLabel(data.projection.paymentMonth)}
             </h2>
             <p className="subtle">Expected values are tied to payment month. FX reference: {data.projection.currentRateArsPerUsd.toFixed(2)} ARS/USD.</p>
-            <table>
+            <table className="desktopOnly desktopTable forecastTable">
               <thead>
                 <tr>
                   <th>Card</th>
@@ -723,6 +827,23 @@ export function FinanceApp() {
                 ))}
               </tbody>
             </table>
+            <div className="mobileOnly">
+              {data.projection.cardTracker.map((row) => (
+                <article key={row.cardId} className="mobileCard">
+                  <h3>{row.cardName}</h3>
+                  <p className="mobileMain">
+                    {displayCurrency === "USD" ? USD_FORMAT.format(row.currentCycleUsd) : ARS_FORMAT.format(row.currentCycleArs)}
+                  </p>
+                  <p className="subtle">Current spending</p>
+                  <details>
+                    <summary>Details</summary>
+                    <p>Expected: {displayCurrency === "USD" ? USD_FORMAT.format(row.expectedCycleUsd) : ARS_FORMAT.format(row.expectedCycleArs)}</p>
+                    <p>Remaining: {displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}</p>
+                    <p>Last expense: {row.lastExpenseDate ?? "-"}</p>
+                  </details>
+                </article>
+              ))}
+            </div>
           </section>
         )}
 
@@ -763,7 +884,7 @@ export function FinanceApp() {
                   ))}
                 </select>
               </div>
-              <table>
+              <table className="desktopOnly desktopTable">
                 <thead>
                   <tr>
                     <th>Date</th>
@@ -789,6 +910,17 @@ export function FinanceApp() {
                   ))}
                 </tbody>
               </table>
+              <div className="mobileOnly">
+                {filteredExpenses.map((expense) => (
+                  <MobileExpenseCard
+                    key={expense.id}
+                    expense={expense}
+                    cards={data.cards}
+                    onSave={updateExpense}
+                    onDelete={deleteExpense}
+                  />
+                ))}
+              </div>
             </article>
           </section>
         )}
@@ -796,8 +928,13 @@ export function FinanceApp() {
         {activeTab === "forecast" && (
           <section className="panel">
             <h2>Financial Forecast ({data.projection.rows.length} months)</h2>
-            <p className="subtle">Monthly adjustment edits closed months with +/- USD and rolls into next savings.</p>
-            <table>
+            <p className="subtle">Shows current and future by default, plus up to 3 previous months. Adjustment is editable only for current and previous month.</p>
+            {displayedForecastRows.length < forecastRows.length ? (
+              <div className="forecastActions">
+                <button className="secondary" onClick={() => setVisiblePastMonths((prev) => prev + 3)}>Load previous</button>
+              </div>
+            ) : null}
+            <table className="desktopOnly desktopTable">
               <thead>
                 <tr>
                   <th>Month</th>
@@ -813,8 +950,9 @@ export function FinanceApp() {
                 </tr>
               </thead>
               <tbody>
-                {forecastRows.map((row) => {
-                  const editable = isPastOrCurrentMonth(row.month, data.projection.currentMonth);
+                {displayedForecastRows.map((row) => {
+                  const editableMonths = new Set([data.projection.currentMonth, shiftMonth(data.projection.currentMonth, -1)]);
+                  const editable = editableMonths.has(row.month);
                   return (
                     <tr key={row.month}>
                       <td>{toMonthLabel(row.month)}</td>
@@ -844,6 +982,40 @@ export function FinanceApp() {
                 })}
               </tbody>
             </table>
+            <div className="mobileOnly">
+              {displayedForecastRows.map((row) => {
+                const editableMonths = new Set([data.projection.currentMonth, shiftMonth(data.projection.currentMonth, -1)]);
+                const editable = editableMonths.has(row.month);
+                return (
+                  <article key={row.month} className="mobileCard">
+                    <h3>{toMonthLabel(row.month)}</h3>
+                    <p className="mobileMain">{formatMoney(row.previewNetUsd)}</p>
+                    <p className="subtle">Net for month</p>
+                    <details>
+                      <summary>Income / Expenses</summary>
+                      <p>Income: {formatMoney(row.incomeUsd)}</p>
+                      <p>Fixed: {formatMoney(row.fixedExpensesUsd)}</p>
+                      <p>Card payment: {formatMoney(row.cardPaymentUsd)}</p>
+                      <p>Advancement: {formatMoney(row.advancementRepaymentUsd)}</p>
+                      <p>Total expenses: {formatMoney(row.totalExpensesUsd)}</p>
+                      <p>Savings: {formatMoney(row.previewSavingsUsd)}</p>
+                    </details>
+                    {editable ? (
+                      <div className="mobileInline">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={adjustmentDrafts[row.month] ?? ""}
+                          onChange={(event) => setAdjustmentDrafts((prev) => ({ ...prev, [row.month]: event.target.value }))}
+                          placeholder="Adjustment USD"
+                        />
+                        <button className="tiny" onClick={() => void saveAdjustment(row.month)}>Save</button>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
           </section>
         )}
 
@@ -1008,6 +1180,21 @@ export function FinanceApp() {
           </section>
         )}
       </div>
+      <nav className="bottomTabs mobileOnly">
+        {MOBILE_TABS.map((tab) => (
+          <button
+            key={tab.id}
+            className={activeTab === tab.id ? "active" : ""}
+            onClick={() => {
+              triggerHaptic();
+              setActiveTab(tab.id);
+            }}
+          >
+            <span className="bottomTabIcon" aria-hidden>{tab.icon}</span>
+            <span>{tab.label}</span>
+          </button>
+        ))}
+      </nav>
     </main>
   );
 }
@@ -1049,6 +1236,65 @@ function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSa
       <td>{expense.description || "-"}</td>
       <td className="rowButtons"><button onClick={onStartEdit}>Edit</button><button className="secondary" onClick={() => void onDelete(expense.id)}>Delete</button></td>
     </tr>
+  );
+}
+
+function MobileExpenseCard({
+  expense,
+  cards,
+  onSave,
+  onDelete
+}: {
+  expense: Expense;
+  cards: Card[];
+  onSave: (expense: Expense) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState(expense);
+
+  useEffect(() => {
+    setDraft(expense);
+  }, [expense]);
+
+  if (isEditing) {
+    return (
+      <article className="mobileCard">
+        <h3>Edit Expense</h3>
+        <div className="mobileInline">
+          <input type="date" value={draft.date} onChange={(event) => setDraft((prev) => ({ ...prev, date: event.target.value }))} />
+          <select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>
+            {cards.map((card) => (
+              <option key={card.id} value={card.id}>{card.name}</option>
+            ))}
+          </select>
+          <input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} />
+          <select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}>
+            <option value="USD">USD</option>
+            <option value="ARS">ARS</option>
+          </select>
+          <input value={draft.description ?? ""} placeholder="Description" onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))} />
+          <button onClick={() => void onSave(draft).then(() => setIsEditing(false))}>Save</button>
+          <button className="secondary" onClick={() => setIsEditing(false)}>Cancel</button>
+        </div>
+      </article>
+    );
+  }
+
+  return (
+    <article className="mobileCard">
+      <h3>{expense.card.name}</h3>
+      <p className="mobileMain">{expense.amount.toFixed(2)} {expense.currency}</p>
+      <p className="subtle">{expense.date}</p>
+      <details>
+        <summary>Details</summary>
+        <p>Description: {expense.description || "-"}</p>
+      </details>
+      <div className="rowButtons">
+        <button onClick={() => setIsEditing(true)}>Edit</button>
+        <button className="secondary" onClick={() => void onDelete(expense.id)}>Delete</button>
+      </div>
+    </article>
   );
 }
 
