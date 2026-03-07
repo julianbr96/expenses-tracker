@@ -214,6 +214,7 @@ export function FinanceApp() {
   const [adjustmentDrafts, setAdjustmentDrafts] = useState<Record<string, string>>({});
   const [debouncedAdjustmentDrafts, setDebouncedAdjustmentDrafts] = useState<Record<string, string>>({});
   const [visiblePastMonths, setVisiblePastMonths] = useState(0);
+  const [visibleFutureMonths, setVisibleFutureMonths] = useState(0);
 
   const [expenseFilterCard, setExpenseFilterCard] = useState<string>("all");
   const [expenseFilterMonth, setExpenseFilterMonth] = useState<string>("all");
@@ -268,6 +269,7 @@ export function FinanceApp() {
     setAdjustmentDrafts(Object.fromEntries(payload.monthlyAdjustments.map((row) => [row.month, String(row.amount)])));
     setDebouncedAdjustmentDrafts(Object.fromEntries(payload.monthlyAdjustments.map((row) => [row.month, String(row.amount)])));
     setVisiblePastMonths(0);
+    setVisibleFutureMonths(0);
 
     if (!expenseForm.cardId && payload.cards[0]) {
       setExpenseForm((prev) => ({ ...prev, cardId: payload.cards[0].id }));
@@ -424,13 +426,28 @@ export function FinanceApp() {
     });
   }, [data, debouncedAdjustmentDrafts]);
 
-  const displayedForecastRows = useMemo(() => {
-    if (!data) return [];
-    const currentIndex = forecastRows.findIndex((row) => row.month === data.projection.currentMonth);
-    if (currentIndex === -1) return forecastRows;
-    const start = Math.max(0, currentIndex - visiblePastMonths);
-    return forecastRows.slice(start);
-  }, [data, forecastRows, visiblePastMonths]);
+  const forecastWindow = useMemo(() => {
+    if (!data || forecastRows.length === 0) {
+      return { rows: [], canLoadPrev: false, canLoadNext: false };
+    }
+
+    const currentYear = data.projection.currentMonth.slice(0, 4);
+    const defaultStart = `${currentYear}-01`;
+    const defaultEnd = `${currentYear}-12`;
+    const availableStart = forecastRows[0].month;
+    const availableEnd = forecastRows[forecastRows.length - 1].month;
+
+    const requestedStart = shiftMonth(defaultStart, -visiblePastMonths);
+    const requestedEnd = shiftMonth(defaultEnd, visibleFutureMonths);
+    const windowStart = requestedStart < availableStart ? availableStart : requestedStart;
+    const windowEnd = requestedEnd > availableEnd ? availableEnd : requestedEnd;
+
+    return {
+      rows: forecastRows.filter((row) => row.month >= windowStart && row.month <= windowEnd),
+      canLoadPrev: windowStart > availableStart,
+      canLoadNext: windowEnd < availableEnd
+    };
+  }, [data, forecastRows, visiblePastMonths, visibleFutureMonths]);
 
   async function submitAuth(event: React.FormEvent) {
     event.preventDefault();
@@ -1003,10 +1020,15 @@ export function FinanceApp() {
         {activeTab === "forecast" && (
           <section className="panel">
             <h2>Financial Forecast ({data.projection.rows.length} months)</h2>
-            <p className="subtle">Shows current and future by default. Load previous months in chunks of 3. Adjustment is editable only for current and previous month.</p>
-            {displayedForecastRows.length < forecastRows.length ? (
+            <p className="subtle">Shows full current year by default (Jan to Dec). Load previous/next in chunks of 3. Adjustment is editable only for current and previous month.</p>
+            {forecastWindow.canLoadPrev || forecastWindow.canLoadNext ? (
               <div className="forecastActions">
-                <button className="secondary" onClick={() => setVisiblePastMonths((prev) => prev + 3)}>Load previous</button>
+                {forecastWindow.canLoadPrev ? (
+                  <button className="secondary" onClick={() => setVisiblePastMonths((prev) => prev + 3)}>Load previous</button>
+                ) : null}
+                {forecastWindow.canLoadNext ? (
+                  <button className="secondary" onClick={() => setVisibleFutureMonths((prev) => prev + 3)}>Load next</button>
+                ) : null}
               </div>
             ) : null}
             <table className="desktopOnly desktopTable">
@@ -1025,7 +1047,7 @@ export function FinanceApp() {
                 </tr>
               </thead>
               <tbody>
-                {displayedForecastRows.map((row) => {
+                {forecastWindow.rows.map((row) => {
                   const editableMonths = new Set([data.projection.currentMonth, shiftMonth(data.projection.currentMonth, -1)]);
                   const editable = editableMonths.has(row.month);
                   return (
@@ -1061,7 +1083,7 @@ export function FinanceApp() {
               </tbody>
             </table>
             <div className="mobileOnly">
-              {displayedForecastRows.map((row) => {
+              {forecastWindow.rows.map((row) => {
                 const editableMonths = new Set([data.projection.currentMonth, shiftMonth(data.projection.currentMonth, -1)]);
                 const editable = editableMonths.has(row.month);
                 return (

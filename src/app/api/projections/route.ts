@@ -8,6 +8,9 @@ import { NextResponse } from "next/server";
 export async function GET() {
   const model = await loadModelForProjection();
   const currentMonth = toMonthKey(new Date());
+  const currentYear = currentMonth.slice(0, 4);
+  const currentYearStart = `${currentYear}-01`;
+  const currentYearEnd = `${currentYear}-12`;
 
   const candidateMonths = [
     ...model.expenses.map((row) => row.date.slice(0, 7)),
@@ -19,9 +22,14 @@ export async function GET() {
   ];
 
   const earliestDataMonth = candidateMonths.length > 0 ? candidateMonths.reduce((min, month) => (month < min ? month : min)) : currentMonth;
-  const startMonth = addMonths(earliestDataMonth, -1);
-  const monthsUntilCurrent = Math.max(0, monthDiff(startMonth, currentMonth));
-  const totalMonths = monthsUntilCurrent + appEnv.projectionMonthsAhead;
+  const latestDataMonth = candidateMonths.length > 0 ? candidateMonths.reduce((max, month) => (month > max ? month : max)) : currentMonth;
+
+  const startMonthCandidate = addMonths(earliestDataMonth, -1);
+  const startMonth = startMonthCandidate < currentYearStart ? startMonthCandidate : currentYearStart;
+
+  const endMonthCandidate = addMonths(latestDataMonth, 1);
+  const endMonth = endMonthCandidate > currentYearEnd ? endMonthCandidate : currentYearEnd;
+  const totalMonths = Math.max(1, monthDiff(startMonth, endMonth) + 1);
 
   const projection = generateProjection({
     ...model,
