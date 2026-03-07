@@ -1,0 +1,1120 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+type Currency = "USD" | "ARS";
+type Tab = "dashboard" | "tracker" | "expenses" | "forecast" | "settings";
+
+interface Card {
+  id: string;
+  name: string;
+  currency: Currency;
+  isActive: boolean;
+}
+
+interface Expense {
+  id: string;
+  date: string;
+  amount: number;
+  currency: Currency;
+  description: string | null;
+  cardId: string;
+  card: Card;
+}
+
+interface Income {
+  id: string;
+  name: string;
+  amount: number;
+  currency: Currency;
+  startMonth: string;
+  endMonth: string | null;
+  isActive: boolean;
+}
+
+interface FixedExpense {
+  id: string;
+  name: string;
+  amount: number;
+  currency: Currency;
+  startMonth: string;
+  endMonth: string | null;
+  isActive: boolean;
+}
+
+interface Expectation {
+  id: string;
+  month: string;
+  amount: number;
+  currency: Currency;
+  cardId: string;
+  card: Card;
+}
+
+interface ExchangeRate {
+  date: string;
+  arsPerUsd: number;
+  source: string | null;
+}
+
+interface MonthlyAdjustment {
+  id: string;
+  month: string;
+  amount: number;
+  currency: Currency;
+  note: string | null;
+}
+
+interface Advancement {
+  id: string;
+  month: string;
+  amount: number;
+  currency: Currency;
+  note: string | null;
+  isActive: boolean;
+}
+
+interface ProjectionRow {
+  month: string;
+  incomeUsd: number;
+  fixedExpensesUsd: number;
+  cardPaymentUsd: number;
+  advancementRepaymentUsd: number;
+  manualAdjustmentUsd: number;
+  totalExpensesUsd: number;
+  netUsd: number;
+  cumulativeSavingsUsd: number;
+}
+
+interface ProjectionData {
+  currentMonth: string;
+  paymentMonth: string;
+  currentRateArsPerUsd: number;
+  rows: ProjectionRow[];
+  cardTracker: {
+    cardId: string;
+    cardName: string;
+    currentCycleUsd: number;
+    expectedCycleUsd: number;
+    remainingExpectedUsd: number;
+    currentCycleArs: number;
+    expectedCycleArs: number;
+    remainingExpectedArs: number;
+    lastExpenseDate: string | null;
+  }[];
+  dashboard: {
+    incomeUsd: number;
+    expectedExpensesUsd: number;
+    projectedSavingsUsd: number;
+    nextCardPaymentUsd: number;
+    nextCardPaymentArs: number;
+  };
+}
+
+interface Bootstrap {
+  projection: ProjectionData;
+  cards: Card[];
+  expenses: Expense[];
+  incomes: Income[];
+  fixedExpenses: FixedExpense[];
+  expectations: Expectation[];
+  exchangeRates: ExchangeRate[];
+  monthlyAdjustments: MonthlyAdjustment[];
+  advancements: Advancement[];
+}
+
+const USD_FORMAT = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  maximumFractionDigits: 2
+});
+
+const ARS_FORMAT = new Intl.NumberFormat("es-AR", {
+  style: "currency",
+  currency: "ARS",
+  maximumFractionDigits: 2
+});
+
+const MONTH_FORMAT = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC"
+});
+
+function toMonthLabel(month: string): string {
+  return MONTH_FORMAT.format(new Date(`${month}-01T00:00:00.000Z`));
+}
+
+function api<T>(url: string, options?: RequestInit): Promise<T> {
+  class ApiError extends Error {
+    status: number;
+
+    constructor(status: number, message: string) {
+      super(message);
+      this.status = status;
+    }
+  }
+
+  return fetch(url, {
+    headers: { "Content-Type": "application/json" },
+    ...options
+  }).then(async (response) => {
+    if (!response.ok) {
+      const text = await response.text();
+      throw new ApiError(response.status, text || `Request failed: ${response.status}`);
+    }
+    return response.json();
+  });
+}
+
+function isPastOrCurrentMonth(month: string, currentMonth: string): boolean {
+  return month <= currentMonth;
+}
+
+export function FinanceApp() {
+  const [activeTab, setActiveTab] = useState<Tab>("dashboard");
+  const [displayCurrency, setDisplayCurrency] = useState<Currency>("ARS");
+  const [data, setData] = useState<Bootstrap | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [busyTab, setBusyTab] = useState<Tab | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [authRequired, setAuthRequired] = useState(false);
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
+  const [editingCardId, setEditingCardId] = useState<string | null>(null);
+  const [editingIncomeId, setEditingIncomeId] = useState<string | null>(null);
+  const [editingFixedId, setEditingFixedId] = useState<string | null>(null);
+  const [editingExpectationId, setEditingExpectationId] = useState<string | null>(null);
+  const [editingAdvancementId, setEditingAdvancementId] = useState<string | null>(null);
+
+  const [adjustmentDrafts, setAdjustmentDrafts] = useState<Record<string, string>>({});
+  const [debouncedAdjustmentDrafts, setDebouncedAdjustmentDrafts] = useState<Record<string, string>>({});
+
+  const [expenseFilterCard, setExpenseFilterCard] = useState<string>("all");
+  const [expenseFilterMonth, setExpenseFilterMonth] = useState<string>("all");
+
+  const [expenseForm, setExpenseForm] = useState({
+    date: new Date().toISOString().slice(0, 10),
+    cardId: "",
+    amount: "",
+    currency: "USD" as Currency,
+    description: ""
+  });
+
+  const [cardForm, setCardForm] = useState({ name: "", currency: "USD" as Currency });
+  const [incomeForm, setIncomeForm] = useState({
+    name: "",
+    amount: "",
+    currency: "USD" as Currency,
+    startMonth: new Date().toISOString().slice(0, 7),
+    endMonth: ""
+  });
+  const [fixedForm, setFixedForm] = useState({
+    name: "",
+    amount: "",
+    currency: "USD" as Currency,
+    startMonth: new Date().toISOString().slice(0, 7),
+    endMonth: ""
+  });
+  const [expectationForm, setExpectationForm] = useState({
+    cardId: "",
+    month: new Date().toISOString().slice(0, 7),
+    amount: "",
+    currency: "ARS" as Currency,
+    repeatMonths: "1"
+  });
+  const [advancementForm, setAdvancementForm] = useState({
+    month: new Date().toISOString().slice(0, 7),
+    amount: "",
+    currency: "ARS" as Currency,
+    note: ""
+  });
+  const [rateForm, setRateForm] = useState({
+    date: new Date().toISOString().slice(0, 10),
+    arsPerUsd: ""
+  });
+
+  async function fetchBootstrap() {
+    const payload = await api<Bootstrap>("/api/projections");
+    setAuthRequired(false);
+    setData(payload);
+    setAdjustmentDrafts(Object.fromEntries(payload.monthlyAdjustments.map((row) => [row.month, String(row.amount)])));
+    setDebouncedAdjustmentDrafts(Object.fromEntries(payload.monthlyAdjustments.map((row) => [row.month, String(row.amount)])));
+
+    if (!expenseForm.cardId && payload.cards[0]) {
+      setExpenseForm((prev) => ({ ...prev, cardId: payload.cards[0].id }));
+    }
+    if (!expectationForm.cardId && payload.cards[0]) {
+      setExpectationForm((prev) => ({ ...prev, cardId: payload.cards[0].id }));
+    }
+  }
+
+  async function runTabAction(tab: Tab, action: () => Promise<void>) {
+    setBusyTab(tab);
+    try {
+      await action();
+      await fetchBootstrap();
+      setError(null);
+    } catch (err) {
+      if (err instanceof Error && "status" in err && (err as { status: number }).status === 401) {
+        setAuthRequired(true);
+        setAuthError("Session expired. Enter password again.");
+      } else {
+        setError(err instanceof Error ? err.message : "Action failed");
+      }
+    } finally {
+      setBusyTab(null);
+    }
+  }
+
+  useEffect(() => {
+    (async () => {
+      try {
+        await fetchBootstrap();
+      } catch (err) {
+        if (err instanceof Error && "status" in err && (err as { status: number }).status === 401) {
+          setAuthRequired(true);
+        } else {
+          setError(err instanceof Error ? err.message : "Failed to load data");
+        }
+      } finally {
+        setInitialLoading(false);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedAdjustmentDrafts(adjustmentDrafts);
+    }, 350);
+
+    return () => clearTimeout(timer);
+  }, [adjustmentDrafts]);
+
+  const expenseMonths = useMemo(() => {
+    if (!data) return [];
+    return Array.from(new Set(data.expenses.map((expense) => expense.date.slice(0, 7))));
+  }, [data]);
+
+  const filteredExpenses = useMemo(() => {
+    if (!data) return [];
+    return data.expenses.filter((expense) => {
+      const byCard = expenseFilterCard === "all" || expense.cardId === expenseFilterCard;
+      const byMonth = expenseFilterMonth === "all" || expense.date.startsWith(expenseFilterMonth);
+      return byCard && byMonth;
+    });
+  }, [data, expenseFilterCard, expenseFilterMonth]);
+
+  const forecastRows = useMemo(() => {
+    if (!data) return [];
+
+    let savings = 0;
+    return data.projection.rows.map((row) => {
+      let adjustment = row.manualAdjustmentUsd;
+      const editable = isPastOrCurrentMonth(row.month, data.projection.currentMonth);
+      if (editable && row.month in debouncedAdjustmentDrafts) {
+        const raw = debouncedAdjustmentDrafts[row.month];
+        if (raw.trim() === "") {
+          adjustment = 0;
+        } else {
+          const parsed = Number(raw);
+          if (Number.isFinite(parsed)) adjustment = parsed;
+        }
+      }
+
+      const net = row.incomeUsd - row.totalExpensesUsd + adjustment;
+      savings += net;
+      return {
+        ...row,
+        previewAdjustmentUsd: adjustment,
+        previewNetUsd: net,
+        previewSavingsUsd: savings
+      };
+    });
+  }, [data, debouncedAdjustmentDrafts]);
+
+  async function submitAuth(event: React.FormEvent) {
+    event.preventDefault();
+    setAuthError(null);
+    try {
+      await api("/api/auth/verify", {
+        method: "POST",
+        body: JSON.stringify({ password: authPassword })
+      });
+      setAuthPassword("");
+      await fetchBootstrap();
+    } catch (err) {
+      setAuthError(err instanceof Error ? err.message : "Invalid password");
+    }
+  }
+
+  function formatMoney(usdValue: number) {
+    if (!data) return "-";
+    if (displayCurrency === "USD") return USD_FORMAT.format(usdValue);
+    return ARS_FORMAT.format(usdValue * data.projection.currentRateArsPerUsd);
+  }
+
+  function dualCurrencyMetric(usdValue: number) {
+    const arsValue = usdValue * (data?.projection.currentRateArsPerUsd ?? 1);
+    const primary = displayCurrency === "USD" ? USD_FORMAT.format(usdValue) : ARS_FORMAT.format(arsValue);
+    const secondary = displayCurrency === "USD" ? ARS_FORMAT.format(arsValue) : USD_FORMAT.format(usdValue);
+    return { primary, secondary };
+  }
+
+  async function submitExpense(event: React.FormEvent) {
+    event.preventDefault();
+    await runTabAction("expenses", async () => {
+      await api("/api/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          ...expenseForm,
+          amount: Number(expenseForm.amount)
+        })
+      });
+      setExpenseForm((prev) => ({ ...prev, amount: "", description: "" }));
+    });
+  }
+
+  async function updateExpense(expense: Expense) {
+    await runTabAction("expenses", async () => {
+      await api("/api/expenses", {
+        method: "PATCH",
+        body: JSON.stringify(expense)
+      });
+      setEditingExpenseId(null);
+    });
+  }
+
+  async function deleteExpense(id: string) {
+    await runTabAction("expenses", async () => {
+      await api("/api/expenses", {
+        method: "DELETE",
+        body: JSON.stringify({ id })
+      });
+    });
+  }
+
+  async function submitCard(event: React.FormEvent) {
+    event.preventDefault();
+    await runTabAction("settings", async () => {
+      await api("/api/cards", { method: "POST", body: JSON.stringify(cardForm) });
+      setCardForm({ name: "", currency: "USD" });
+    });
+  }
+
+  async function updateCard(card: Partial<Card> & { id: string }) {
+    await runTabAction("settings", async () => {
+      await api("/api/cards", {
+        method: "PATCH",
+        body: JSON.stringify(card)
+      });
+      setEditingCardId(null);
+    });
+  }
+
+  async function toggleCard(card: Card) {
+    await updateCard({ id: card.id, isActive: !card.isActive });
+  }
+
+  async function submitIncome(event: React.FormEvent) {
+    event.preventDefault();
+    await runTabAction("settings", async () => {
+      await api("/api/incomes", {
+        method: "POST",
+        body: JSON.stringify({
+          ...incomeForm,
+          amount: Number(incomeForm.amount),
+          endMonth: incomeForm.endMonth || null
+        })
+      });
+      setIncomeForm((prev) => ({ ...prev, name: "", amount: "", endMonth: "" }));
+    });
+  }
+
+  async function updateIncome(payload: Partial<Income> & { id: string }) {
+    await runTabAction("settings", async () => {
+      await api("/api/incomes", {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      setEditingIncomeId(null);
+    });
+  }
+
+  async function toggleIncome(income: Income) {
+    await updateIncome({ id: income.id, isActive: !income.isActive });
+  }
+
+  async function submitFixed(event: React.FormEvent) {
+    event.preventDefault();
+    await runTabAction("settings", async () => {
+      await api("/api/fixed-expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          ...fixedForm,
+          amount: Number(fixedForm.amount),
+          endMonth: fixedForm.endMonth || null
+        })
+      });
+      setFixedForm((prev) => ({ ...prev, name: "", amount: "", endMonth: "" }));
+    });
+  }
+
+  async function updateFixed(payload: Partial<FixedExpense> & { id: string }) {
+    await runTabAction("settings", async () => {
+      await api("/api/fixed-expenses", {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      setEditingFixedId(null);
+    });
+  }
+
+  async function toggleFixed(item: FixedExpense) {
+    await updateFixed({ id: item.id, isActive: !item.isActive });
+  }
+
+  async function submitExpectation(event: React.FormEvent) {
+    event.preventDefault();
+    await runTabAction("settings", async () => {
+      await api("/api/expectations", {
+        method: "POST",
+        body: JSON.stringify({
+          ...expectationForm,
+          amount: Number(expectationForm.amount),
+          repeatMonths: Number(expectationForm.repeatMonths)
+        })
+      });
+      setExpectationForm((prev) => ({ ...prev, amount: "" }));
+    });
+  }
+
+  async function updateExpectation(payload: Partial<Expectation> & { id: string }) {
+    await runTabAction("settings", async () => {
+      await api("/api/expectations", {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      setEditingExpectationId(null);
+    });
+  }
+
+  async function deleteExpectation(id: string) {
+    await runTabAction("settings", async () => {
+      await api("/api/expectations", {
+        method: "DELETE",
+        body: JSON.stringify({ id })
+      });
+    });
+  }
+
+  async function submitAdvancement(event: React.FormEvent) {
+    event.preventDefault();
+    await runTabAction("settings", async () => {
+      await api("/api/advancements", {
+        method: "POST",
+        body: JSON.stringify({
+          ...advancementForm,
+          amount: Number(advancementForm.amount)
+        })
+      });
+      setAdvancementForm((prev) => ({ ...prev, amount: "", note: "" }));
+    });
+  }
+
+  async function updateAdvancement(payload: Partial<Advancement> & { id: string }) {
+    await runTabAction("settings", async () => {
+      await api("/api/advancements", {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      setEditingAdvancementId(null);
+    });
+  }
+
+  async function deleteAdvancement(id: string) {
+    await runTabAction("settings", async () => {
+      await api("/api/advancements", {
+        method: "DELETE",
+        body: JSON.stringify({ id })
+      });
+    });
+  }
+
+  async function submitRate(event: React.FormEvent) {
+    event.preventDefault();
+    await runTabAction("settings", async () => {
+      await api("/api/exchange-rates", {
+        method: "POST",
+        body: JSON.stringify({
+          ...rateForm,
+          arsPerUsd: Number(rateForm.arsPerUsd),
+          source: "manual"
+        })
+      });
+      setRateForm((prev) => ({ ...prev, arsPerUsd: "" }));
+    });
+  }
+
+  async function syncRate() {
+    await runTabAction("settings", async () => {
+      await api("/api/exchange-rates/fetch", { method: "POST" });
+    });
+  }
+
+  async function saveAdjustment(month: string) {
+    const raw = adjustmentDrafts[month] ?? "";
+    await runTabAction("forecast", async () => {
+      if (!raw.trim()) {
+        await api("/api/monthly-adjustments", {
+          method: "DELETE",
+          body: JSON.stringify({ month })
+        });
+        return;
+      }
+
+      await api("/api/monthly-adjustments", {
+        method: "PUT",
+        body: JSON.stringify({
+          month,
+          amount: Number(raw),
+          currency: "USD",
+          note: "manual month correction"
+        })
+      });
+    });
+  }
+
+  if (initialLoading) {
+    return <main className="container">Loading...</main>;
+  }
+
+  if (authRequired) {
+    return (
+      <main className="container">
+        <section className="panel authPanel">
+          <h2>Locked</h2>
+          <p>Enter your app password to continue.</p>
+          <form className="formGrid" onSubmit={submitAuth}>
+            <input
+              type="password"
+              placeholder="Password"
+              value={authPassword}
+              onChange={(event) => setAuthPassword(event.target.value)}
+              required
+            />
+            <button type="submit">Unlock</button>
+          </form>
+          {authError ? <p className="error">{authError}</p> : null}
+        </section>
+      </main>
+    );
+  }
+
+  if (error || !data) {
+    return (
+      <main className="container">
+        <h1>Personal Finance Forecasting</h1>
+        <p className="error">{error || "Unknown error"}</p>
+        <button
+          onClick={() => {
+            setInitialLoading(true);
+            setError(null);
+            void (async () => {
+              try {
+                await fetchBootstrap();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Failed to load data");
+              } finally {
+                setInitialLoading(false);
+              }
+            })();
+          }}
+        >
+          Retry
+        </button>
+      </main>
+    );
+  }
+
+  return (
+    <main className="container">
+      <header className="header">
+        <h1>Personal Finance Forecasting</h1>
+        <p>Track expenses now, project next-month cash impact, and reconcile real closes.</p>
+      </header>
+
+      <div className="toolbar">
+        <div className="tabs">
+          <button className={activeTab === "dashboard" ? "active" : ""} onClick={() => setActiveTab("dashboard")}>Dashboard</button>
+          <button className={activeTab === "tracker" ? "active" : ""} onClick={() => setActiveTab("tracker")}>Credit Card Tracker</button>
+          <button className={activeTab === "expenses" ? "active" : ""} onClick={() => setActiveTab("expenses")}>Expense Log</button>
+          <button className={activeTab === "forecast" ? "active" : ""} onClick={() => setActiveTab("forecast")}>Forecast</button>
+          <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>Settings</button>
+        </div>
+        {activeTab !== "settings" ? (
+          <div className="currencyToggle">
+            <span>Currency</span>
+            <button className={displayCurrency === "USD" ? "active" : ""} onClick={() => setDisplayCurrency("USD")}>USD</button>
+            <button className={displayCurrency === "ARS" ? "active" : ""} onClick={() => setDisplayCurrency("ARS")}>ARS</button>
+          </div>
+        ) : null}
+      </div>
+
+      <div className={`sectionWrap ${busyTab === activeTab ? "isBusy" : ""}`}>
+        {busyTab === activeTab && (
+          <div className="busyOverlay">
+            <div className="spinner" />
+            <span>Updating...</span>
+          </div>
+        )}
+
+        {activeTab === "dashboard" && (
+          <section className="grid4">
+            <article className="metric">
+              <h3>Current Month Income</h3>
+              <strong>{dualCurrencyMetric(data.projection.dashboard.incomeUsd).primary}</strong>
+              <small>{dualCurrencyMetric(data.projection.dashboard.incomeUsd).secondary}</small>
+            </article>
+            <article className="metric">
+              <h3>Current Month Expenses</h3>
+              <strong>{dualCurrencyMetric(data.projection.dashboard.expectedExpensesUsd).primary}</strong>
+              <small>{dualCurrencyMetric(data.projection.dashboard.expectedExpensesUsd).secondary}</small>
+            </article>
+            <article className="metric">
+              <h3>Projected Net (Current)</h3>
+              <strong>{dualCurrencyMetric(data.projection.dashboard.projectedSavingsUsd).primary}</strong>
+              <small>{dualCurrencyMetric(data.projection.dashboard.projectedSavingsUsd).secondary}</small>
+            </article>
+            <article className="metric">
+              <h3>Next Card Payment (1st)</h3>
+              <strong>{dualCurrencyMetric(data.projection.dashboard.nextCardPaymentUsd).primary}</strong>
+              <small>{dualCurrencyMetric(data.projection.dashboard.nextCardPaymentUsd).secondary}</small>
+            </article>
+          </section>
+        )}
+
+        {activeTab === "tracker" && (
+          <section className="panel">
+            <h2>
+              Current Spending Cycle ({toMonthLabel(data.projection.currentMonth)}) · Paid on 1st of {toMonthLabel(data.projection.paymentMonth)}
+            </h2>
+            <p className="subtle">Expected values are tied to payment month. FX reference: {data.projection.currentRateArsPerUsd.toFixed(2)} ARS/USD.</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Card</th>
+                  <th>Current Spending</th>
+                  <th>Expected Payment Month</th>
+                  <th>Remaining</th>
+                  <th>Last Expense</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.projection.cardTracker.map((row) => (
+                  <tr key={row.cardId}>
+                    <td>{row.cardName}</td>
+                    <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.currentCycleUsd) : ARS_FORMAT.format(row.currentCycleArs)}</td>
+                    <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.expectedCycleUsd) : ARS_FORMAT.format(row.expectedCycleArs)}</td>
+                    <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}</td>
+                    <td>{row.lastExpenseDate ?? "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </section>
+        )}
+
+        {activeTab === "expenses" && (
+          <section className="stack">
+            <article className="panel">
+              <h2>Add Expense</h2>
+              <form className="formGrid" onSubmit={submitExpense}>
+                <input type="date" value={expenseForm.date} onChange={(event) => setExpenseForm((prev) => ({ ...prev, date: event.target.value }))} required />
+                <select value={expenseForm.cardId} onChange={(event) => setExpenseForm((prev) => ({ ...prev, cardId: event.target.value }))} required>
+                  {data.cards.map((card) => (
+                    <option key={card.id} value={card.id}>{card.name}</option>
+                  ))}
+                </select>
+                <input type="number" step="0.01" placeholder="Amount" value={expenseForm.amount} onChange={(event) => setExpenseForm((prev) => ({ ...prev, amount: event.target.value }))} required />
+                <select value={expenseForm.currency} onChange={(event) => setExpenseForm((prev) => ({ ...prev, currency: event.target.value as Currency }))}>
+                  <option value="USD">USD</option>
+                  <option value="ARS">ARS</option>
+                </select>
+                <input placeholder="Description (optional)" value={expenseForm.description} onChange={(event) => setExpenseForm((prev) => ({ ...prev, description: event.target.value }))} />
+                <button type="submit">Save Expense</button>
+              </form>
+            </article>
+
+            <article className="panel">
+              <h2>Expense Log</h2>
+              <div className="filters">
+                <select value={expenseFilterCard} onChange={(event) => setExpenseFilterCard(event.target.value)}>
+                  <option value="all">All cards</option>
+                  {data.cards.map((card) => (
+                    <option key={card.id} value={card.id}>{card.name}</option>
+                  ))}
+                </select>
+                <select value={expenseFilterMonth} onChange={(event) => setExpenseFilterMonth(event.target.value)}>
+                  <option value="all">All months</option>
+                  {expenseMonths.map((month) => (
+                    <option key={month} value={month}>{toMonthLabel(month)}</option>
+                  ))}
+                </select>
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Card</th>
+                    <th>Amount</th>
+                    <th>Currency</th>
+                    <th>Description</th>
+                    <th>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredExpenses.map((expense) => (
+                    <ExpenseRow
+                      key={expense.id}
+                      expense={expense}
+                      cards={data.cards}
+                      isEditing={editingExpenseId === expense.id}
+                      onStartEdit={() => setEditingExpenseId(expense.id)}
+                      onCancelEdit={() => setEditingExpenseId(null)}
+                      onSave={updateExpense}
+                      onDelete={deleteExpense}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </article>
+          </section>
+        )}
+
+        {activeTab === "forecast" && (
+          <section className="panel">
+            <h2>Financial Forecast ({data.projection.rows.length} months)</h2>
+            <p className="subtle">Monthly adjustment edits closed months with +/- USD and rolls into next savings.</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>Month</th>
+                  <th>Income</th>
+                  <th>Fixed</th>
+                  <th>Card Payment</th>
+                  <th>Advancement Impact</th>
+                  <th>Adjustment (USD)</th>
+                  <th>Total Expenses</th>
+                  <th>Net</th>
+                  <th>Savings</th>
+                  <th>Apply</th>
+                </tr>
+              </thead>
+              <tbody>
+                {forecastRows.map((row) => {
+                  const editable = isPastOrCurrentMonth(row.month, data.projection.currentMonth);
+                  return (
+                    <tr key={row.month}>
+                      <td>{toMonthLabel(row.month)}</td>
+                      <td>{formatMoney(row.incomeUsd)}</td>
+                      <td>{formatMoney(row.fixedExpensesUsd)}</td>
+                      <td>{formatMoney(row.cardPaymentUsd)}</td>
+                      <td>{formatMoney(row.advancementRepaymentUsd)}</td>
+                      <td>
+                        {editable ? (
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={adjustmentDrafts[row.month] ?? ""}
+                            onChange={(event) => setAdjustmentDrafts((prev) => ({ ...prev, [row.month]: event.target.value }))}
+                            placeholder="0"
+                          />
+                        ) : (
+                          USD_FORMAT.format(row.previewAdjustmentUsd)
+                        )}
+                      </td>
+                      <td>{formatMoney(row.totalExpensesUsd)}</td>
+                      <td>{formatMoney(row.previewNetUsd)}</td>
+                      <td>{formatMoney(row.previewSavingsUsd)}</td>
+                      <td>{editable ? <button className="tiny" onClick={() => void saveAdjustment(row.month)}>Save</button> : "-"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </section>
+        )}
+
+        {activeTab === "settings" && (
+          <section className="stack">
+            <article className="panel">
+              <h2>Cards</h2>
+              <form className="formGrid" onSubmit={submitCard}>
+                <input placeholder="Card name" value={cardForm.name} onChange={(event) => setCardForm((prev) => ({ ...prev, name: event.target.value }))} required />
+                <select value={cardForm.currency} onChange={(event) => setCardForm((prev) => ({ ...prev, currency: event.target.value as Currency }))}>
+                  <option value="USD">USD</option>
+                  <option value="ARS">ARS</option>
+                </select>
+                <button type="submit">Add Card</button>
+              </form>
+              <ul>
+                {data.cards.map((card) => (
+                  <EditableCardRow
+                    key={card.id}
+                    card={card}
+                    isEditing={editingCardId === card.id}
+                    onEdit={() => setEditingCardId(card.id)}
+                    onCancel={() => setEditingCardId(null)}
+                    onSave={updateCard}
+                    onToggle={() => void toggleCard(card)}
+                  />
+                ))}
+              </ul>
+            </article>
+
+            <article className="panel">
+              <h2>Income Sources</h2>
+              <form className="formGrid" onSubmit={submitIncome}>
+                <input placeholder="Income name" value={incomeForm.name} onChange={(event) => setIncomeForm((prev) => ({ ...prev, name: event.target.value }))} required />
+                <input type="number" step="0.01" placeholder="Amount" value={incomeForm.amount} onChange={(event) => setIncomeForm((prev) => ({ ...prev, amount: event.target.value }))} required />
+                <select value={incomeForm.currency} onChange={(event) => setIncomeForm((prev) => ({ ...prev, currency: event.target.value as Currency }))}>
+                  <option value="USD">USD</option>
+                  <option value="ARS">ARS</option>
+                </select>
+                <label className="fieldLabel"><span>Start month</span><input type="month" value={incomeForm.startMonth} onChange={(event) => setIncomeForm((prev) => ({ ...prev, startMonth: event.target.value }))} required /></label>
+                <label className="fieldLabel"><span>End month</span><input type="month" value={incomeForm.endMonth} onChange={(event) => setIncomeForm((prev) => ({ ...prev, endMonth: event.target.value }))} /></label>
+                <button type="submit">Add Income</button>
+              </form>
+              <ul>
+                {data.incomes.map((income) => (
+                  <EditableIncomeRow
+                    key={income.id}
+                    income={income}
+                    isEditing={editingIncomeId === income.id}
+                    onEdit={() => setEditingIncomeId(income.id)}
+                    onCancel={() => setEditingIncomeId(null)}
+                    onSave={updateIncome}
+                    onToggle={() => void toggleIncome(income)}
+                  />
+                ))}
+              </ul>
+            </article>
+
+            <article className="panel">
+              <h2>Fixed Expenses</h2>
+              <form className="formGrid" onSubmit={submitFixed}>
+                <input placeholder="Expense name" value={fixedForm.name} onChange={(event) => setFixedForm((prev) => ({ ...prev, name: event.target.value }))} required />
+                <input type="number" step="0.01" placeholder="Amount" value={fixedForm.amount} onChange={(event) => setFixedForm((prev) => ({ ...prev, amount: event.target.value }))} required />
+                <select value={fixedForm.currency} onChange={(event) => setFixedForm((prev) => ({ ...prev, currency: event.target.value as Currency }))}>
+                  <option value="USD">USD</option>
+                  <option value="ARS">ARS</option>
+                </select>
+                <label className="fieldLabel"><span>Start month</span><input type="month" value={fixedForm.startMonth} onChange={(event) => setFixedForm((prev) => ({ ...prev, startMonth: event.target.value }))} required /></label>
+                <label className="fieldLabel"><span>End month</span><input type="month" value={fixedForm.endMonth} onChange={(event) => setFixedForm((prev) => ({ ...prev, endMonth: event.target.value }))} /></label>
+                <button type="submit">Add Fixed</button>
+              </form>
+              <ul>
+                {data.fixedExpenses.map((fixed) => (
+                  <EditableFixedRow
+                    key={fixed.id}
+                    item={fixed}
+                    isEditing={editingFixedId === fixed.id}
+                    onEdit={() => setEditingFixedId(fixed.id)}
+                    onCancel={() => setEditingFixedId(null)}
+                    onSave={updateFixed}
+                    onToggle={() => void toggleFixed(fixed)}
+                  />
+                ))}
+              </ul>
+            </article>
+
+            <article className="panel">
+              <h2>Expected Card Spending (Payment Month)</h2>
+              <form className="formGrid" onSubmit={submitExpectation}>
+                <select value={expectationForm.cardId} onChange={(event) => setExpectationForm((prev) => ({ ...prev, cardId: event.target.value }))} required>
+                  {data.cards.map((card) => (
+                    <option key={card.id} value={card.id}>{card.name}</option>
+                  ))}
+                </select>
+                <label className="fieldLabel"><span>Payment month</span><input type="month" value={expectationForm.month} onChange={(event) => setExpectationForm((prev) => ({ ...prev, month: event.target.value }))} required /></label>
+                <input type="number" step="0.01" placeholder="Expected amount" value={expectationForm.amount} onChange={(event) => setExpectationForm((prev) => ({ ...prev, amount: event.target.value }))} required />
+                <select value={expectationForm.currency} onChange={(event) => setExpectationForm((prev) => ({ ...prev, currency: event.target.value as Currency }))}>
+                  <option value="USD">USD</option>
+                  <option value="ARS">ARS</option>
+                </select>
+                <input type="number" min="1" max="36" placeholder="Repeat N months" value={expectationForm.repeatMonths} onChange={(event) => setExpectationForm((prev) => ({ ...prev, repeatMonths: event.target.value }))} />
+                <button type="submit">Save Expectation</button>
+              </form>
+              <ul>
+                {data.expectations.map((row) => (
+                  <EditableExpectationRow
+                    key={row.id}
+                    row={row}
+                    cards={data.cards}
+                    isEditing={editingExpectationId === row.id}
+                    onEdit={() => setEditingExpectationId(row.id)}
+                    onCancel={() => setEditingExpectationId(null)}
+                    onSave={updateExpectation}
+                    onDelete={() => void deleteExpectation(row.id)}
+                  />
+                ))}
+              </ul>
+            </article>
+
+            <article className="panel">
+              <h2>Advancements (Affect Next Month)</h2>
+              <form className="formGrid" onSubmit={submitAdvancement}>
+                <label className="fieldLabel"><span>Advancement month</span><input type="month" value={advancementForm.month} onChange={(event) => setAdvancementForm((prev) => ({ ...prev, month: event.target.value }))} required /></label>
+                <input type="number" step="0.01" placeholder="Amount" value={advancementForm.amount} onChange={(event) => setAdvancementForm((prev) => ({ ...prev, amount: event.target.value }))} required />
+                <select value={advancementForm.currency} onChange={(event) => setAdvancementForm((prev) => ({ ...prev, currency: event.target.value as Currency }))}>
+                  <option value="USD">USD</option>
+                  <option value="ARS">ARS</option>
+                </select>
+                <input placeholder="Note (optional)" value={advancementForm.note} onChange={(event) => setAdvancementForm((prev) => ({ ...prev, note: event.target.value }))} />
+                <button type="submit">Add Advancement</button>
+              </form>
+              <ul>
+                {data.advancements.map((row) => (
+                  <EditableAdvancementRow
+                    key={row.id}
+                    row={row}
+                    isEditing={editingAdvancementId === row.id}
+                    onEdit={() => setEditingAdvancementId(row.id)}
+                    onCancel={() => setEditingAdvancementId(null)}
+                    onSave={updateAdvancement}
+                    onToggle={() => void updateAdvancement({ id: row.id, isActive: !row.isActive })}
+                    onDelete={() => void deleteAdvancement(row.id)}
+                  />
+                ))}
+              </ul>
+            </article>
+
+            <article className="panel">
+              <h2>Exchange Rate (ARS per USD)</h2>
+              <form className="formGrid" onSubmit={submitRate}>
+                <input type="date" value={rateForm.date} onChange={(event) => setRateForm((prev) => ({ ...prev, date: event.target.value }))} required />
+                <input type="number" step="0.000001" placeholder="ARS per USD" value={rateForm.arsPerUsd} onChange={(event) => setRateForm((prev) => ({ ...prev, arsPerUsd: event.target.value }))} required />
+                <button type="submit">Save Rate</button>
+                <button type="button" className="secondary" onClick={() => void syncRate()}>Fetch from API</button>
+              </form>
+              <ul>
+                {data.exchangeRates.slice(0, 20).map((rate) => (
+                  <li key={rate.date} className="listRow"><span>{rate.date} - {rate.arsPerUsd.toFixed(4)} ({rate.source ?? "manual"})</span></li>
+                ))}
+              </ul>
+            </article>
+          </section>
+        )}
+      </div>
+    </main>
+  );
+}
+
+function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSave, onDelete }: {
+  expense: Expense;
+  cards: Card[];
+  isEditing: boolean;
+  onStartEdit: () => void;
+  onCancelEdit: () => void;
+  onSave: (expense: Expense) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(expense);
+
+  useEffect(() => {
+    setDraft(expense);
+  }, [expense]);
+
+  if (isEditing) {
+    return (
+      <tr>
+        <td><input type="date" value={draft.date} onChange={(event) => setDraft((prev) => ({ ...prev, date: event.target.value }))} /></td>
+        <td><select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>{cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}</select></td>
+        <td><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /></td>
+        <td><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></td>
+        <td><input value={draft.description ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))} /></td>
+        <td className="rowButtons"><button onClick={() => void onSave(draft)}>Save</button><button className="secondary" onClick={onCancelEdit}>Cancel</button></td>
+      </tr>
+    );
+  }
+
+  return (
+    <tr>
+      <td>{expense.date}</td>
+      <td>{expense.card.name}</td>
+      <td>{expense.amount.toFixed(2)}</td>
+      <td>{expense.currency}</td>
+      <td>{expense.description || "-"}</td>
+      <td className="rowButtons"><button onClick={onStartEdit}>Edit</button><button className="secondary" onClick={() => void onDelete(expense.id)}>Delete</button></td>
+    </tr>
+  );
+}
+
+function EditableCardRow({ card, isEditing, onEdit, onCancel, onSave, onToggle }: {
+  card: Card;
+  isEditing: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: (payload: Partial<Card> & { id: string }) => Promise<void>;
+  onToggle: () => void;
+}) {
+  const [draft, setDraft] = useState(card);
+  useEffect(() => setDraft(card), [card]);
+  return <li className="listRow">{isEditing ? <><div className="inlineForm"><input value={draft.name} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} /><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></div><div className="rowButtons"><button onClick={() => void onSave({ id: card.id, name: draft.name, currency: draft.currency })}>Save</button><button className="secondary" onClick={onCancel}>Cancel</button></div></> : <><span>{card.name} ({card.currency})</span><div className="rowButtons"><button onClick={onEdit}>Edit</button><button className="secondary" onClick={onToggle}>{card.isActive ? "Deactivate" : "Activate"}</button></div></>}</li>;
+}
+
+function EditableIncomeRow({ income, isEditing, onEdit, onCancel, onSave, onToggle }: {
+  income: Income;
+  isEditing: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: (payload: Partial<Income> & { id: string }) => Promise<void>;
+  onToggle: () => void;
+}) {
+  const [draft, setDraft] = useState(income);
+  useEffect(() => setDraft(income), [income]);
+  return <li className="listRow">{isEditing ? <><div className="inlineForm"><input value={draft.name} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} /><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select><label className="fieldLabel"><span>Start month</span><input type="month" value={draft.startMonth} onChange={(event) => setDraft((prev) => ({ ...prev, startMonth: event.target.value }))} /></label><label className="fieldLabel"><span>End month</span><input type="month" value={draft.endMonth ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, endMonth: event.target.value || null }))} /></label></div><div className="rowButtons"><button onClick={() => void onSave({ ...draft, id: income.id })}>Save</button><button className="secondary" onClick={onCancel}>Cancel</button></div></> : <><span>{income.name}: {income.amount} {income.currency} ({income.startMonth}{income.endMonth ? ` to ${income.endMonth}` : " onward"})</span><div className="rowButtons"><button onClick={onEdit}>Edit</button><button className="secondary" onClick={onToggle}>{income.isActive ? "Disable" : "Enable"}</button></div></>}</li>;
+}
+
+function EditableFixedRow({ item, isEditing, onEdit, onCancel, onSave, onToggle }: {
+  item: FixedExpense;
+  isEditing: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: (payload: Partial<FixedExpense> & { id: string }) => Promise<void>;
+  onToggle: () => void;
+}) {
+  const [draft, setDraft] = useState(item);
+  useEffect(() => setDraft(item), [item]);
+  return <li className="listRow">{isEditing ? <><div className="inlineForm"><input value={draft.name} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} /><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select><label className="fieldLabel"><span>Start month</span><input type="month" value={draft.startMonth} onChange={(event) => setDraft((prev) => ({ ...prev, startMonth: event.target.value }))} /></label><label className="fieldLabel"><span>End month</span><input type="month" value={draft.endMonth ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, endMonth: event.target.value || null }))} /></label></div><div className="rowButtons"><button onClick={() => void onSave({ ...draft, id: item.id })}>Save</button><button className="secondary" onClick={onCancel}>Cancel</button></div></> : <><span>{item.name}: {item.amount} {item.currency} ({item.startMonth}{item.endMonth ? ` to ${item.endMonth}` : " onward"})</span><div className="rowButtons"><button onClick={onEdit}>Edit</button><button className="secondary" onClick={onToggle}>{item.isActive ? "Disable" : "Enable"}</button></div></>}</li>;
+}
+
+function EditableExpectationRow({ row, cards, isEditing, onEdit, onCancel, onSave, onDelete }: {
+  row: Expectation;
+  cards: Card[];
+  isEditing: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: (payload: Partial<Expectation> & { id: string }) => Promise<void>;
+  onDelete: () => void;
+}) {
+  const [draft, setDraft] = useState(row);
+  useEffect(() => setDraft(row), [row]);
+  return <li className="listRow">{isEditing ? <><div className="inlineForm"><select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>{cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}</select><label className="fieldLabel"><span>Payment month</span><input type="month" value={draft.month} onChange={(event) => setDraft((prev) => ({ ...prev, month: event.target.value }))} /></label><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></div><div className="rowButtons"><button onClick={() => void onSave({ ...draft, id: row.id })}>Save</button><button className="secondary" onClick={onCancel}>Cancel</button></div></> : <><span>{row.card.name} - {row.month}: {row.amount} {row.currency}</span><div className="rowButtons"><button onClick={onEdit}>Edit</button><button className="secondary" onClick={onDelete}>Delete</button></div></>}</li>;
+}
+
+function EditableAdvancementRow({ row, isEditing, onEdit, onCancel, onSave, onToggle, onDelete }: {
+  row: Advancement;
+  isEditing: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: (payload: Partial<Advancement> & { id: string }) => Promise<void>;
+  onToggle: () => void;
+  onDelete: () => void;
+}) {
+  const [draft, setDraft] = useState(row);
+  useEffect(() => setDraft(row), [row]);
+  return <li className="listRow">{isEditing ? <><div className="inlineForm"><label className="fieldLabel"><span>Advancement month</span><input type="month" value={draft.month} onChange={(event) => setDraft((prev) => ({ ...prev, month: event.target.value }))} /></label><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select><input placeholder="Note" value={draft.note ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, note: event.target.value }))} /></div><div className="rowButtons"><button onClick={() => void onSave({ id: row.id, month: draft.month, amount: draft.amount, currency: draft.currency, note: draft.note })}>Save</button><button className="secondary" onClick={onCancel}>Cancel</button></div></> : <><span>{row.month}: {row.amount} {row.currency}{row.note ? ` (${row.note})` : ""}</span><div className="rowButtons"><button onClick={onEdit}>Edit</button><button className="secondary" onClick={onToggle}>{row.isActive ? "Disable" : "Enable"}</button><button className="secondary" onClick={onDelete}>Delete</button></div></>}</li>;
+}
