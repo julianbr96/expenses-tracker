@@ -86,7 +86,7 @@ interface ProjectionRow {
   incomeUsd: number;
   fixedExpensesUsd: number;
   cardPaymentUsd: number;
-  advancementRepaymentUsd: number;
+  advancementImpactUsd: number;
   manualAdjustmentUsd: number;
   totalExpensesUsd: number;
   netUsd: number;
@@ -977,7 +977,7 @@ export function FinanceApp() {
                       <td>{formatMoney(row.incomeUsd)}</td>
                       <td>{formatMoney(row.fixedExpensesUsd)}</td>
                       <td>{formatMoney(row.cardPaymentUsd)}</td>
-                      <td>{formatMoney(row.advancementRepaymentUsd)}</td>
+                      <td>{formatMoney(row.advancementImpactUsd)}</td>
                       <td>
                         {editable ? (
                           <input
@@ -1017,7 +1017,7 @@ export function FinanceApp() {
                       <p>Income: {formatMoney(row.incomeUsd)}</p>
                       <p>Fixed: {formatMoney(row.fixedExpensesUsd)}</p>
                       <p>Card payment: {formatMoney(row.cardPaymentUsd)}</p>
-                      <p>Advancement: {formatMoney(row.advancementRepaymentUsd)}</p>
+                      <p>Advancement: {formatMoney(row.advancementImpactUsd)}</p>
                       <p>Total expenses: {formatMoney(row.totalExpensesUsd)}</p>
                       <p>Savings: {formatMoney(row.previewSavingsUsd)}</p>
                     </details>

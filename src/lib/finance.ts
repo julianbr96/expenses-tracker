@@ -192,17 +192,21 @@ function sumAdjustmentsByMonth(
   return totals;
 }
 
-function sumAdvancementRepaymentsByMonth(
+function sumAdvancementImpactsByMonth(
   advancements: AdvancementRecord[],
   rateLookup: ReturnType<typeof buildRateLookup>
 ): Map<string, number> {
   const totals = new Map<string, number>();
   for (const advancement of advancements) {
     if (!advancement.isActive) continue;
-    const repaymentMonth = addMonths(advancement.month, 1);
-    const dateLike = `${repaymentMonth}-01`;
-    const usd = toUsd(advancement.amount, advancement.currency, dateLike, rateLookup);
-    totals.set(repaymentMonth, (totals.get(repaymentMonth) ?? 0) + usd);
+    const month = advancement.month;
+    const repaymentMonth = addMonths(month, 1);
+    const monthDateLike = `${month}-01`;
+    const repaymentDateLike = `${repaymentMonth}-01`;
+    const usdInMonth = toUsd(advancement.amount, advancement.currency, monthDateLike, rateLookup);
+    const usdInRepaymentMonth = toUsd(advancement.amount, advancement.currency, repaymentDateLike, rateLookup);
+    totals.set(month, (totals.get(month) ?? 0) + usdInMonth);
+    totals.set(repaymentMonth, (totals.get(repaymentMonth) ?? 0) - usdInRepaymentMonth);
   }
   return totals;
 }
@@ -262,7 +266,7 @@ export function generateProjection(input: ProjectionInput): ProjectionOutput {
   const actualByMonthCard = sumByMonthAndCard(input.expenses, rateLookup);
   const expectedByMonthCard = sumExpectationsByMonthAndCard(input.expectations, rateLookup);
   const adjustmentsByMonth = sumAdjustmentsByMonth(input.monthlyAdjustments ?? [], rateLookup);
-  const advancementRepaymentsByMonth = sumAdvancementRepaymentsByMonth(input.advancements ?? [], rateLookup);
+  const advancementImpactsByMonth = sumAdvancementImpactsByMonth(input.advancements ?? [], rateLookup);
 
   const defaultStartMonth = input.startFromCurrentMonth === false ? addMonths(currentMonth, -2) : currentMonth;
   const firstMonth = input.startMonth ?? defaultStartMonth;
@@ -272,13 +276,13 @@ export function generateProjection(input: ProjectionInput): ProjectionOutput {
 
   for (let i = 0; i < monthsAhead; i += 1) {
     const month = addMonths(firstMonth, i);
-    const incomeUsd = monthIncomeUsd(month, input.incomes, rateLookup);
+    const advancementImpactUsd = advancementImpactsByMonth.get(month) ?? 0;
+    const incomeUsd = monthIncomeUsd(month, input.incomes, rateLookup) + advancementImpactUsd;
     const fixedExpensesUsd = monthFixedUsd(month, input.fixedExpenses, rateLookup);
     const cardPaymentUsd = cardPaymentUsdForMonth(month, currentMonth, actualByMonthCard, expectedByMonthCard);
-    const advancementRepaymentUsd = advancementRepaymentsByMonth.get(month) ?? 0;
     const manualAdjustmentUsd = adjustmentsByMonth.get(month) ?? 0;
 
-    const totalExpensesUsd = fixedExpensesUsd + cardPaymentUsd + advancementRepaymentUsd;
+    const totalExpensesUsd = fixedExpensesUsd + cardPaymentUsd;
     const netUsd = incomeUsd - totalExpensesUsd + manualAdjustmentUsd;
     savings += netUsd;
 
@@ -287,7 +291,7 @@ export function generateProjection(input: ProjectionInput): ProjectionOutput {
       incomeUsd: round2(incomeUsd),
       fixedExpensesUsd: round2(fixedExpensesUsd),
       cardPaymentUsd: round2(cardPaymentUsd),
-      advancementRepaymentUsd: round2(advancementRepaymentUsd),
+      advancementImpactUsd: round2(advancementImpactUsd),
       manualAdjustmentUsd: round2(manualAdjustmentUsd),
       totalExpensesUsd: round2(totalExpensesUsd),
       netUsd: round2(netUsd),

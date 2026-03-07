@@ -5,7 +5,7 @@ export interface ProjectionRow {
   incomeUsd: number;
   fixedExpensesUsd: number;
   cardPaymentUsd: number;
-  advancementRepaymentUsd: number;
+  advancementImpactUsd: number;
   manualAdjustmentUsd: number;
   totalExpensesUsd: number;
   netUsd: number;
