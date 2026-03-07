@@ -63,6 +63,36 @@ npm run dev
   - `DOLARITO_API_KEY` (optional)
 - `vercel.json` includes a daily cron trigger.
 
+## Telegram Bot Integration
+
+The app includes a webhook endpoint at:
+- `POST /api/telegram/webhook`
+
+Supported commands:
+- `/add` guided flow with buttons to create an expense (card -> amount -> currency -> date -> description)
+- `/remaining` list remaining expected spend for all cards
+- `/remaining <card>` remaining for one card (by index or name)
+- `/cancel` cancel current guided flow
+- `/help` command list
+
+Required env vars:
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_WEBHOOK_SECRET` (recommended)
+
+Optional env var:
+- `TELEGRAM_ALLOWED_CHAT_IDS` (comma-separated chat IDs allowlist)
+
+Set webhook (replace URL + values):
+
+```bash
+curl -X POST "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url":"https://<your-domain>/api/telegram/webhook",
+    "secret_token":"<TELEGRAM_WEBHOOK_SECRET>"
+  }'
+```
+
 ## Notes
 
 - All financial projections are normalized to USD.

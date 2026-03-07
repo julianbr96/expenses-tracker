@@ -7,6 +7,7 @@ export function middleware(request: NextRequest) {
   const path = request.nextUrl.pathname;
   if (!path.startsWith("/api")) return NextResponse.next();
   if (path === "/api/auth/verify") return NextResponse.next();
+  if (path === "/api/telegram/webhook") return NextResponse.next();
 
   const auth = request.cookies.get("finance_auth")?.value;
   if (auth === "1") return NextResponse.next();
