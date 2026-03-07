@@ -192,7 +192,7 @@ function triggerHaptic() {
 
 export function FinanceApp() {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
-  const [displayCurrency, setDisplayCurrency] = useState<Currency>("ARS");
+  const [displayCurrency, setDisplayCurrency] = useState<Currency>("USD");
   const [data, setData] = useState<Bootstrap | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [busyTab, setBusyTab] = useState<Tab | null>(null);
@@ -213,7 +213,7 @@ export function FinanceApp() {
 
   const [adjustmentDrafts, setAdjustmentDrafts] = useState<Record<string, string>>({});
   const [debouncedAdjustmentDrafts, setDebouncedAdjustmentDrafts] = useState<Record<string, string>>({});
-  const [visiblePastMonths, setVisiblePastMonths] = useState(3);
+  const [visiblePastMonths, setVisiblePastMonths] = useState(0);
 
   const [expenseFilterCard, setExpenseFilterCard] = useState<string>("all");
   const [expenseFilterMonth, setExpenseFilterMonth] = useState<string>("all");
@@ -267,7 +267,7 @@ export function FinanceApp() {
     setData(payload);
     setAdjustmentDrafts(Object.fromEntries(payload.monthlyAdjustments.map((row) => [row.month, String(row.amount)])));
     setDebouncedAdjustmentDrafts(Object.fromEntries(payload.monthlyAdjustments.map((row) => [row.month, String(row.amount)])));
-    setVisiblePastMonths(3);
+    setVisiblePastMonths(0);
 
     if (!expenseForm.cardId && payload.cards[0]) {
       setExpenseForm((prev) => ({ ...prev, cardId: payload.cards[0].id }));
@@ -452,6 +452,13 @@ export function FinanceApp() {
         </button>
       </div>
     );
+  }
+
+  function trackerStatus(row: ProjectionData["cardTracker"][number]): "over" | "warning" | "ok" | "none" {
+    if (row.expectedCycleUsd <= 0) return "none";
+    if (row.currentCycleUsd >= row.expectedCycleUsd) return "over";
+    if (row.currentCycleUsd / row.expectedCycleUsd >= 0.85) return "warning";
+    return "ok";
   }
 
   async function submitExpense(event: React.FormEvent) {
@@ -817,8 +824,13 @@ export function FinanceApp() {
               </thead>
               <tbody>
                 {data.projection.cardTracker.map((row) => (
-                  <tr key={row.cardId}>
-                    <td>{row.cardName}</td>
+                  <tr key={row.cardId} className={`trackerRow tracker-${trackerStatus(row)}`}>
+                    <td>
+                      <span className="trackerName">{row.cardName}</span>
+                      <span className={`trackerBadge tracker-${trackerStatus(row)}`}>
+                        {trackerStatus(row) === "over" ? "Over limit" : trackerStatus(row) === "warning" ? "Near limit" : trackerStatus(row) === "ok" ? "Healthy" : "No target"}
+                      </span>
+                    </td>
                     <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.currentCycleUsd) : ARS_FORMAT.format(row.currentCycleArs)}</td>
                     <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.expectedCycleUsd) : ARS_FORMAT.format(row.expectedCycleArs)}</td>
                     <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}</td>
@@ -829,8 +841,11 @@ export function FinanceApp() {
             </table>
             <div className="mobileOnly">
               {data.projection.cardTracker.map((row) => (
-                <article key={row.cardId} className="mobileCard">
+                <article key={row.cardId} className={`mobileCard tracker-${trackerStatus(row)}`}>
                   <h3>{row.cardName}</h3>
+                  <p className={`trackerBadge tracker-${trackerStatus(row)}`}>
+                    {trackerStatus(row) === "over" ? "Over limit" : trackerStatus(row) === "warning" ? "Near limit" : trackerStatus(row) === "ok" ? "Healthy margin" : "No target"}
+                  </p>
                   <p className="mobileMain">
                     {displayCurrency === "USD" ? USD_FORMAT.format(row.currentCycleUsd) : ARS_FORMAT.format(row.currentCycleArs)}
                   </p>
@@ -928,7 +943,7 @@ export function FinanceApp() {
         {activeTab === "forecast" && (
           <section className="panel">
             <h2>Financial Forecast ({data.projection.rows.length} months)</h2>
-            <p className="subtle">Shows current and future by default, plus up to 3 previous months. Adjustment is editable only for current and previous month.</p>
+            <p className="subtle">Shows current and future by default. Load previous months in chunks of 3. Adjustment is editable only for current and previous month.</p>
             {displayedForecastRows.length < forecastRows.length ? (
               <div className="forecastActions">
                 <button className="secondary" onClick={() => setVisiblePastMonths((prev) => prev + 3)}>Load previous</button>
@@ -954,8 +969,11 @@ export function FinanceApp() {
                   const editableMonths = new Set([data.projection.currentMonth, shiftMonth(data.projection.currentMonth, -1)]);
                   const editable = editableMonths.has(row.month);
                   return (
-                    <tr key={row.month}>
-                      <td>{toMonthLabel(row.month)}</td>
+                    <tr key={row.month} className={row.month === data.projection.currentMonth ? "currentMonthRow" : ""}>
+                      <td>
+                        {toMonthLabel(row.month)}
+                        {row.month === data.projection.currentMonth ? <span className="currentCycleBadge">Current cycle</span> : null}
+                      </td>
                       <td>{formatMoney(row.incomeUsd)}</td>
                       <td>{formatMoney(row.fixedExpensesUsd)}</td>
                       <td>{formatMoney(row.cardPaymentUsd)}</td>
@@ -987,8 +1005,11 @@ export function FinanceApp() {
                 const editableMonths = new Set([data.projection.currentMonth, shiftMonth(data.projection.currentMonth, -1)]);
                 const editable = editableMonths.has(row.month);
                 return (
-                  <article key={row.month} className="mobileCard">
-                    <h3>{toMonthLabel(row.month)}</h3>
+                  <article key={row.month} className={`mobileCard ${row.month === data.projection.currentMonth ? "currentMonthCard" : ""}`}>
+                    <h3>
+                      {toMonthLabel(row.month)}
+                      {row.month === data.projection.currentMonth ? <span className="currentCycleBadge">Current cycle</span> : null}
+                    </h3>
                     <p className="mobileMain">{formatMoney(row.previewNetUsd)}</p>
                     <p className="subtle">Net for month</p>
                     <details>
