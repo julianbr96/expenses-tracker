@@ -124,6 +124,22 @@ body {
 
 .actionSwitcher {
   gap: 6px;
+  min-width: 0;
+}
+
+.syncStatus {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.syncInlineBtn {
+  min-width: 72px;
+  background: linear-gradient(135deg, #2dd4bf, #14b8a6);
+  color: #ffffff !important;
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+  border-color: transparent;
 }
 
 .menuToggleBtn {
@@ -141,7 +157,7 @@ body {
 }
 
 .logoutInlineBtn {
-  min-width: 110px;
+  min-width: 86px;
   background: linear-gradient(135deg, #b83a2f, #8e2419);
   color: #ffffff !important;
   text-shadow: 0 1px 0 rgba(0, 0, 0, 0.22);
@@ -852,8 +868,13 @@ th {
     flex: 0 0 auto;
   }
 
-  .currencyToggle button {
+  .currencyToggle .currencyBtn {
     min-width: 92px;
+  }
+
+  .syncStatus {
+    max-width: 110px;
+    font-size: 0.78rem;
   }
 
   .formGrid {

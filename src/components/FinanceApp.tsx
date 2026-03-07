@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Currency = "USD" | "ARS";
 type Tab = "dashboard" | "tracker" | "expenses" | "forecast" | "settings";
@@ -212,6 +212,7 @@ function triggerHaptic() {
 }
 
 export function FinanceApp() {
+  const SYNC_COOLDOWN_MS = 25000;
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const [displayCurrency, setDisplayCurrency] = useState<Currency>("USD");
   const [data, setData] = useState<Bootstrap | null>(null);
@@ -225,6 +226,9 @@ export function FinanceApp() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [topActionMode, setTopActionMode] = useState<"currency" | "menu">("currency");
   const [loaderStatus, setLoaderStatus] = useState("Starting...");
+  const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const lastSyncRef = useRef<number>(0);
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [editingCardId, setEditingCardId] = useState<string | null>(null);
   const [editingIncomeId, setEditingIncomeId] = useState<string | null>(null);
@@ -282,10 +286,16 @@ export function FinanceApp() {
     arsPerUsd: ""
   });
 
-  async function fetchBootstrap() {
+  async function fetchBootstrap(force = true) {
+    if (!force && lastSyncRef.current > 0 && Date.now() - lastSyncRef.current < SYNC_COOLDOWN_MS) {
+      return;
+    }
     console.info("[loader] fetching bootstrap data");
     setLoaderStatus("Loading latest data...");
     const payload = await api<Bootstrap>("/api/projections");
+    const syncedAt = Date.now();
+    lastSyncRef.current = syncedAt;
+    setLastSyncedAt(syncedAt);
     setAuthRequired(false);
     setData(payload);
     setAdjustmentDrafts(Object.fromEntries(payload.monthlyAdjustments.map((row) => [row.month, String(row.amount)])));
@@ -307,7 +317,7 @@ export function FinanceApp() {
     console.info(`[loader] running action for tab=${tab}`);
     try {
       await action();
-      await fetchBootstrap();
+      await fetchBootstrap(true);
       setError(null);
     } catch (err) {
       if (err instanceof Error && "status" in err && (err as { status: number }).status === 401) {
@@ -324,7 +334,7 @@ export function FinanceApp() {
   useEffect(() => {
     (async () => {
       try {
-        await fetchBootstrap();
+        await fetchBootstrap(true);
       } catch (err) {
         if (err instanceof Error && "status" in err && (err as { status: number }).status === 401) {
           setAuthRequired(true);
@@ -342,6 +352,29 @@ export function FinanceApp() {
     if (!("serviceWorker" in navigator)) return;
     void navigator.serviceWorker.register("/sw.js").catch(() => {});
   }, []);
+
+  useEffect(() => {
+    void syncIfStale();
+  }, [activeTab]);
+
+  useEffect(() => {
+    function handleFocus() {
+      void syncIfStale();
+    }
+
+    function handleVisibility() {
+      if (document.visibilityState === "visible") {
+        void syncIfStale();
+      }
+    }
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [initialLoading, authRequired, isSyncing]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -490,7 +523,7 @@ export function FinanceApp() {
       });
       setAuthPassword("");
       console.info("[auth] success");
-      await fetchBootstrap();
+      await fetchBootstrap(true);
     } catch (err) {
       console.info("[auth] failed");
       setAuthError(err instanceof Error ? err.message : "Invalid password");
@@ -530,18 +563,57 @@ export function FinanceApp() {
     return { primary, secondary };
   }
 
+  function formatLastSync(value: number | null) {
+    if (!value) return "--:--:--";
+    return new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    }).format(new Date(value));
+  }
+
+  async function syncNow() {
+    setIsSyncing(true);
+    setLoaderStatus("Syncing data...");
+    try {
+      await fetchBootstrap(true);
+      setError(null);
+    } catch (err) {
+      if (err instanceof Error && "status" in err && (err as { status: number }).status === 401) {
+        setAuthRequired(true);
+        setAuthError("Session expired. Enter password again.");
+      } else {
+        setError(err instanceof Error ? err.message : "Sync failed");
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  }
+
+  async function syncIfStale() {
+    if (initialLoading || authRequired || isSyncing) return;
+    try {
+      await fetchBootstrap(false);
+    } catch {
+      // ignore auto-refresh failures
+    }
+  }
+
   function renderTopActionSwitcher() {
     return (
       <div className="currencyToggle actionSwitcher">
         {topActionMode === "currency" ? (
           <>
             <span>Currency</span>
-            <button className={displayCurrency === "USD" ? "active" : ""} onClick={() => setDisplayCurrency("USD")}>USD</button>
-            <button className={displayCurrency === "ARS" ? "active" : ""} onClick={() => setDisplayCurrency("ARS")}>ARS</button>
+            <button className={`currencyBtn ${displayCurrency === "USD" ? "active" : ""}`} onClick={() => setDisplayCurrency("USD")}>USD</button>
+            <button className={`currencyBtn ${displayCurrency === "ARS" ? "active" : ""}`} onClick={() => setDisplayCurrency("ARS")}>ARS</button>
           </>
         ) : (
           <>
-            <span>Menu</span>
+            <span className="syncStatus">Synced {formatLastSync(lastSyncedAt)}</span>
+            <button className="secondary syncInlineBtn" disabled={isSyncing} onClick={() => void syncNow()}>
+              {isSyncing ? "Syncing..." : "Sync"}
+            </button>
             <button className="secondary logoutInlineBtn" disabled={isLoggingOut} onClick={() => void logout()}>
               {isLoggingOut ? "Logging out..." : "Logout"}
             </button>
