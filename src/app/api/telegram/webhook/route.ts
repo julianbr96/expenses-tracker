@@ -74,7 +74,7 @@ function parseCurrency(raw: string): AppCurrency | null {
 function parseDateInput(raw: string): string | null {
   const value = raw.trim().toLowerCase();
   if (value === "-" || value === "skip" || value === "hoy" || value === "today") {
-    return toDateOnly(new Date());
+    return "NOW";
   }
   if (value === "ayer" || value === "yesterday") {
     const date = new Date();
@@ -83,6 +83,11 @@ function parseDateInput(raw: string): string | null {
   }
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
   return null;
+}
+
+function toLocalMidnight(dateOnly: string): Date {
+  const [year, month, day] = dateOnly.split("-").map((part) => Number(part));
+  return new Date(year, month - 1, day, 0, 0, 0, 0);
 }
 
 function cardPrompt(cards: Array<{ id: string; name: string }>): string {
@@ -314,10 +319,14 @@ async function handleCallback(
     }
 
     const key = callbackData.slice("add:date:".length);
-    const date = new Date();
-    if (key === "yesterday") {
-      date.setUTCDate(date.getUTCDate() - 1);
-    } else if (key !== "today") {
+    let pendingDate: Date;
+    if (key === "today") {
+      pendingDate = new Date();
+    } else if (key === "yesterday") {
+      const date = new Date();
+      date.setDate(date.getDate() - 1);
+      pendingDate = toLocalMidnight(toDateOnly(date));
+    } else {
       await sendTelegramMessage(chatId, "Invalid date option. Use /add to restart.");
       return;
     }
@@ -326,7 +335,7 @@ async function handleCallback(
       where: { chatId },
       data: {
         step: "AWAITING_DESCRIPTION",
-        pendingDate: new Date(`${toDateOnly(date)}T00:00:00.000Z`)
+        pendingDate
       }
     });
     await sendTelegramMessage(chatId, "Add description or tap skip.", buildDescriptionKeyboard());
@@ -528,7 +537,7 @@ export async function POST(request: Request) {
       where: { chatId },
       data: {
         step: "AWAITING_DESCRIPTION",
-        pendingDate: new Date(`${dateOnly}T00:00:00.000Z`)
+        pendingDate: dateOnly === "NOW" ? new Date() : toLocalMidnight(dateOnly)
       }
     });
     await sendTelegramMessage(chatId, "Add description or tap skip.", buildDescriptionKeyboard());
