@@ -335,6 +335,36 @@ export function FinanceApp() {
     });
   }, [data, expenseFilterCard, expenseFilterMonth]);
 
+  const sortedIncomes = useMemo(() => {
+    if (!data) return [];
+    return [...data.incomes].sort((a, b) => {
+      const byStart = b.startMonth.localeCompare(a.startMonth);
+      if (byStart !== 0) return byStart;
+      return b.name.localeCompare(a.name);
+    });
+  }, [data]);
+
+  const sortedFixedExpenses = useMemo(() => {
+    if (!data) return [];
+    return [...data.fixedExpenses].sort((a, b) => {
+      const byStart = b.startMonth.localeCompare(a.startMonth);
+      if (byStart !== 0) return byStart;
+      return b.name.localeCompare(a.name);
+    });
+  }, [data]);
+
+  const sortedAdvancements = useMemo(() => {
+    if (!data) return [];
+    return [...data.advancements].sort((a, b) => b.month.localeCompare(a.month));
+  }, [data]);
+
+  const sortedExchangeRates = useMemo(() => {
+    if (!data) return [];
+    return [...data.exchangeRates]
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 20);
+  }, [data]);
+
   const expectationGroups = useMemo(() => {
     if (!data) return [];
 
@@ -354,9 +384,15 @@ export function FinanceApp() {
     return [...grouped.values()]
       .map((group) => ({
         ...group,
-        rows: [...group.rows].sort((a, b) => a.month.localeCompare(b.month))
+        rows: [...group.rows].sort((a, b) => b.month.localeCompare(a.month))
       }))
-      .sort((a, b) => a.card.name.localeCompare(b.card.name));
+      .sort((a, b) => {
+        const aLatest = a.rows[0]?.month ?? "";
+        const bLatest = b.rows[0]?.month ?? "";
+        const byLatest = bLatest.localeCompare(aLatest);
+        if (byLatest !== 0) return byLatest;
+        return b.card.name.localeCompare(a.card.name);
+      });
   }, [data]);
 
   const forecastRows = useMemo(() => {
@@ -1112,7 +1148,7 @@ export function FinanceApp() {
                 <button type="submit">Add Income</button>
               </form>
               <ul className="accordionList">
-                {data.incomes.map((income) => (
+                {sortedIncomes.map((income) => (
                   <details key={income.id} className="itemAccordion">
                     <summary>
                       <span>{income.name}</span>
@@ -1147,7 +1183,7 @@ export function FinanceApp() {
                 <button type="submit">Add Fixed</button>
               </form>
               <ul className="accordionList">
-                {data.fixedExpenses.map((fixed) => (
+                {sortedFixedExpenses.map((fixed) => (
                   <details key={fixed.id} className="itemAccordion">
                     <summary>
                       <span>{fixed.name}</span>
@@ -1235,7 +1271,7 @@ export function FinanceApp() {
                 <button type="submit">Add Advancement</button>
               </form>
               <ul className="accordionList">
-                {data.advancements.map((row) => (
+                {sortedAdvancements.map((row) => (
                   <details key={row.id} className="itemAccordion">
                     <summary>
                       <span>{toMonthLabel(row.month)}</span>
@@ -1266,7 +1302,7 @@ export function FinanceApp() {
                 <button type="button" className="secondary" onClick={() => void syncRate()}>Fetch from API</button>
               </form>
               <ul className="accordionList">
-                {data.exchangeRates.slice(0, 20).map((rate) => (
+                {sortedExchangeRates.map((rate) => (
                   <details key={rate.date} className="itemAccordion">
                     <summary>
                       <span>{rate.date}</span>

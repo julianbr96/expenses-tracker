@@ -59,8 +59,8 @@ npm run dev
 
 - Endpoint: `GET/POST /api/exchange-rates/fetch`
 - Configure provider via:
-  - `DOLARITO_API_URL`
-  - `DOLARITO_API_KEY` (optional)
+  - `CRIPTOYA_API_URL` (default: `https://criptoya.com/api/USDT/ARS/1`)
+  - `CRIPTOYA_API_KEY` (optional)
 - `vercel.json` includes a daily cron trigger.
 
 ## Telegram Bot Integration
