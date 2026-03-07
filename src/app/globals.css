@@ -609,6 +609,61 @@ th {
   width: 100%;
 }
 
+.expectationAccordionStack {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+  width: 100%;
+  min-width: 0;
+}
+
+.expectationAccordion {
+  border: 1px solid #e6dcc8;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.68);
+  overflow: hidden;
+  width: 100%;
+  min-width: 0;
+}
+
+.expectationAccordion summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 11px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 600;
+  background: linear-gradient(120deg, rgba(255, 255, 255, 0.82), rgba(248, 241, 225, 0.75));
+  min-width: 0;
+  width: 100%;
+}
+
+.expectationAccordion summary::-webkit-details-marker {
+  display: none;
+}
+
+.expectationAccordion summary span {
+  min-width: 0;
+}
+
+.expectationAccordion summary span:first-child {
+  overflow-wrap: anywhere;
+}
+
+.expectationAccordion ul {
+  margin: 0;
+  padding: 0 14px 8px;
+  list-style: none;
+  min-width: 0;
+}
+
+.expectationAccordion .listRow > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .rowButtons {
   display: flex;
   gap: 8px;

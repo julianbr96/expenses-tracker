@@ -335,6 +335,30 @@ export function FinanceApp() {
     });
   }, [data, expenseFilterCard, expenseFilterMonth]);
 
+  const expectationGroups = useMemo(() => {
+    if (!data) return [];
+
+    const currentMonth = data.projection.currentMonth;
+    const grouped = new Map<string, { card: Card; rows: Expectation[] }>();
+
+    for (const row of data.expectations) {
+      if (row.month < currentMonth) continue;
+      const existing = grouped.get(row.cardId);
+      if (existing) {
+        existing.rows.push(row);
+      } else {
+        grouped.set(row.cardId, { card: row.card, rows: [row] });
+      }
+    }
+
+    return [...grouped.values()]
+      .map((group) => ({
+        ...group,
+        rows: [...group.rows].sort((a, b) => a.month.localeCompare(b.month))
+      }))
+      .sort((a, b) => a.card.name.localeCompare(b.card.name));
+  }, [data]);
+
   const forecastRows = useMemo(() => {
     if (!data) return [];
     const editableMonths = new Set([data.projection.currentMonth, shiftMonth(data.projection.currentMonth, -1)]);
@@ -1140,20 +1164,34 @@ export function FinanceApp() {
                 <input type="number" min="1" max="36" placeholder="Repeat N months" value={expectationForm.repeatMonths} onChange={(event) => setExpectationForm((prev) => ({ ...prev, repeatMonths: event.target.value }))} />
                 <button type="submit">Save Expectation</button>
               </form>
-              <ul>
-                {data.expectations.map((row) => (
-                  <EditableExpectationRow
-                    key={row.id}
-                    row={row}
-                    cards={data.cards}
-                    isEditing={editingExpectationId === row.id}
-                    onEdit={() => setEditingExpectationId(row.id)}
-                    onCancel={() => setEditingExpectationId(null)}
-                    onSave={updateExpectation}
-                    onDelete={() => void deleteExpectation(row.id)}
-                  />
-                ))}
-              </ul>
+              {expectationGroups.length === 0 ? (
+                <p className="subtle">No current/future expectations yet.</p>
+              ) : (
+                <div className="expectationAccordionStack">
+                  {expectationGroups.map((group, index) => (
+                    <details key={group.card.id} className="expectationAccordion" open={index === 0}>
+                      <summary>
+                        <span>{group.card.name}</span>
+                        <span className="subtle">{group.rows.length} month{group.rows.length === 1 ? "" : "s"}</span>
+                      </summary>
+                      <ul>
+                        {group.rows.map((row) => (
+                          <EditableExpectationRow
+                            key={row.id}
+                            row={row}
+                            cards={data.cards}
+                            isEditing={editingExpectationId === row.id}
+                            onEdit={() => setEditingExpectationId(row.id)}
+                            onCancel={() => setEditingExpectationId(null)}
+                            onSave={updateExpectation}
+                            onDelete={() => void deleteExpectation(row.id)}
+                          />
+                        ))}
+                      </ul>
+                    </details>
+                  ))}
+                </div>
+              )}
             </article>
 
             <article className="panel">
