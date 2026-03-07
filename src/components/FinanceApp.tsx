@@ -153,6 +153,27 @@ function toMonthLabel(month: string): string {
   return MONTH_FORMAT.format(new Date(`${month}-01T00:00:00.000Z`));
 }
 
+function toLocalDateTimeLabel(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(undefined, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function expenseDateTimeIso(date: string, useNow: boolean): string {
+  if (useNow) return new Date().toISOString();
+  const [year, month, day] = date.split("-").map((part) => Number(part));
+  if (!year || !month || !day) return new Date().toISOString();
+  const localMidnight = new Date(year, month - 1, day, 0, 0, 0, 0);
+  return localMidnight.toISOString();
+}
+
 function api<T>(url: string, options?: RequestInit): Promise<T> {
   class ApiError extends Error {
     status: number;
@@ -218,6 +239,7 @@ export function FinanceApp() {
 
   const [expenseFilterCard, setExpenseFilterCard] = useState<string>("all");
   const [expenseFilterMonth, setExpenseFilterMonth] = useState<string>("all");
+  const [expenseDateTouched, setExpenseDateTouched] = useState(false);
 
   const [expenseForm, setExpenseForm] = useState({
     date: new Date().toISOString().slice(0, 10),
@@ -545,18 +567,24 @@ export function FinanceApp() {
         method: "POST",
         body: JSON.stringify({
           ...expenseForm,
+          dateTimeIso: expenseDateTimeIso(expenseForm.date, !expenseDateTouched),
           amount: Number(expenseForm.amount)
         })
       });
       setExpenseForm((prev) => ({ ...prev, amount: "", description: "" }));
+      setExpenseDateTouched(false);
     });
   }
 
-  async function updateExpense(expense: Expense) {
+  async function updateExpense(expense: Expense, originalDate: string) {
+    const useNow = expense.date === originalDate;
     await runTabAction("expenses", async () => {
       await api("/api/expenses", {
         method: "PATCH",
-        body: JSON.stringify(expense)
+        body: JSON.stringify({
+          ...expense,
+          dateTimeIso: expenseDateTimeIso(expense.date, useNow)
+        })
       });
       setEditingExpenseId(null);
     });
@@ -911,7 +939,7 @@ export function FinanceApp() {
                     <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.currentCycleUsd) : ARS_FORMAT.format(row.currentCycleArs)}</td>
                     <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.expectedCycleUsd) : ARS_FORMAT.format(row.expectedCycleArs)}</td>
                     <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}</td>
-                    <td>{row.lastExpenseDate ?? "-"}</td>
+                    <td>{toLocalDateTimeLabel(row.lastExpenseDate)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -931,7 +959,7 @@ export function FinanceApp() {
                     <summary>Details</summary>
                     <p>Expected: {displayCurrency === "USD" ? USD_FORMAT.format(row.expectedCycleUsd) : ARS_FORMAT.format(row.expectedCycleArs)}</p>
                     <p>Remaining: {displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}</p>
-                    <p>Last expense: {row.lastExpenseDate ?? "-"}</p>
+                    <p>Last expense: {toLocalDateTimeLabel(row.lastExpenseDate)}</p>
                   </details>
                 </article>
               ))}
@@ -944,7 +972,15 @@ export function FinanceApp() {
             <article className="panel">
               <h2>Add Expense</h2>
               <form className="formGrid" onSubmit={submitExpense}>
-                <input type="date" value={expenseForm.date} onChange={(event) => setExpenseForm((prev) => ({ ...prev, date: event.target.value }))} required />
+                <input
+                  type="date"
+                  value={expenseForm.date}
+                  onChange={(event) => {
+                    setExpenseDateTouched(true);
+                    setExpenseForm((prev) => ({ ...prev, date: event.target.value }));
+                  }}
+                  required
+                />
                 <select value={expenseForm.cardId} onChange={(event) => setExpenseForm((prev) => ({ ...prev, cardId: event.target.value }))} required>
                   {data.cards.map((card) => (
                     <option key={card.id} value={card.id}>{card.name}</option>
@@ -1365,7 +1401,7 @@ function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSa
   isEditing: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
-  onSave: (expense: Expense) => Promise<void>;
+  onSave: (expense: Expense, originalDate: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(expense);
@@ -1382,7 +1418,7 @@ function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSa
         <td><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /></td>
         <td><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></td>
         <td><input value={draft.description ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))} /></td>
-        <td className="rowButtons"><button onClick={() => void onSave(draft)}>Save</button><button className="secondary" onClick={onCancelEdit}>Cancel</button></td>
+        <td className="rowButtons"><button onClick={() => void onSave(draft, expense.date)}>Save</button><button className="secondary" onClick={onCancelEdit}>Cancel</button></td>
       </tr>
     );
   }
@@ -1407,7 +1443,7 @@ function MobileExpenseCard({
 }: {
   expense: Expense;
   cards: Card[];
-  onSave: (expense: Expense) => Promise<void>;
+  onSave: (expense: Expense, originalDate: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
@@ -1434,7 +1470,7 @@ function MobileExpenseCard({
             <option value="ARS">ARS</option>
           </select>
           <input value={draft.description ?? ""} placeholder="Description" onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))} />
-          <button onClick={() => void onSave(draft).then(() => setIsEditing(false))}>Save</button>
+          <button onClick={() => void onSave(draft, expense.date).then(() => setIsEditing(false))}>Save</button>
           <button className="secondary" onClick={() => setIsEditing(false)}>Cancel</button>
         </div>
       </article>

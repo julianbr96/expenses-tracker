@@ -322,7 +322,7 @@ export function generateProjection(input: ProjectionInput): ProjectionOutput {
       currentCycleArs: round2(actual * currentRateArsPerUsd),
       expectedCycleArs: round2(expected * currentRateArsPerUsd),
       remainingExpectedArs: round2(Math.max(expected - actual, 0) * currentRateArsPerUsd),
-      lastExpenseDate: lastExpense ? normalizeRateDate(lastExpense.date) : null
+      lastExpenseDate: lastExpense ? lastExpense.date : null
     };
   });
 

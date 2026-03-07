@@ -5,6 +5,7 @@ import { z } from "zod";
 
 const createSchema = z.object({
   date: z.string().date(),
+  dateTimeIso: z.string().datetime().optional(),
   cardId: z.string().min(1),
   amount: amountSchema,
   currency: currencySchema,
@@ -14,6 +15,7 @@ const createSchema = z.object({
 const updateSchema = z.object({
   id: z.string().min(1),
   date: z.string().date().optional(),
+  dateTimeIso: z.string().datetime().optional(),
   cardId: z.string().min(1).optional(),
   amount: amountSchema.optional(),
   currency: currencySchema.optional(),
@@ -42,12 +44,15 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
+  const { dateTimeIso, date, ...rest } = parsed.data;
 
   const expense = await prisma.expense.create({
     data: {
-      ...parsed.data,
-      description: parsed.data.description || null,
-      date: new Date(`${parsed.data.date}T00:00:00.000Z`)
+      ...rest,
+      description: rest.description || null,
+      date: dateTimeIso
+        ? new Date(dateTimeIso)
+        : new Date(`${date}T00:00:00.000Z`)
     }
   });
 
@@ -60,12 +65,16 @@ export async function PATCH(request: Request) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  const { id, ...changes } = parsed.data;
+  const { id, dateTimeIso, date, ...changes } = parsed.data;
   const expense = await prisma.expense.update({
     where: { id },
     data: {
       ...changes,
-      date: changes.date ? new Date(`${changes.date}T00:00:00.000Z`) : undefined
+      date: dateTimeIso
+        ? new Date(dateTimeIso)
+        : date
+          ? new Date(`${date}T00:00:00.000Z`)
+          : undefined
     }
   });
 
