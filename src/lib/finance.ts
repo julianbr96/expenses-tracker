@@ -222,11 +222,13 @@ function cardPaymentUsdForMonth(
   const actual = totalMonthCard(actualByMonthCard, spendingMonth);
   const expectedPayment = totalMonthCard(expectedByMonthCard, paymentMonth);
 
-  if (compareMonth(paymentMonth, currentMonth) <= 0) {
+  if (compareMonth(paymentMonth, currentMonth) < 0) {
     return actual;
   }
 
-  if (paymentMonth === nextMonth) {
+  // For current and next payment month, blend real tracked data with expectation gap.
+  // This covers partially tracked months without underestimating card payment egress.
+  if (paymentMonth === currentMonth || paymentMonth === nextMonth) {
     return actual + Math.max(expectedPayment - actual, 0);
   }
 

@@ -1066,7 +1066,7 @@ export function FinanceApp() {
 
         {activeTab === "settings" && (
           <section className="stack">
-            <article className="panel">
+            <article className="panel settingsCards">
               <h2>Cards</h2>
               <form className="formGrid" onSubmit={submitCard}>
                 <input placeholder="Card name" value={cardForm.name} onChange={(event) => setCardForm((prev) => ({ ...prev, name: event.target.value }))} required />
@@ -1076,22 +1076,29 @@ export function FinanceApp() {
                 </select>
                 <button type="submit">Add Card</button>
               </form>
-              <ul>
+              <ul className="accordionList">
                 {data.cards.map((card) => (
-                  <EditableCardRow
-                    key={card.id}
-                    card={card}
-                    isEditing={editingCardId === card.id}
-                    onEdit={() => setEditingCardId(card.id)}
-                    onCancel={() => setEditingCardId(null)}
-                    onSave={updateCard}
-                    onToggle={() => void toggleCard(card)}
-                  />
+                  <details key={card.id} className="itemAccordion">
+                    <summary>
+                      <span>{card.name}</span>
+                      <span className="subtle">{card.currency} - {card.isActive ? "active" : "inactive"}</span>
+                    </summary>
+                    <ul>
+                      <EditableCardRow
+                        card={card}
+                        isEditing={editingCardId === card.id}
+                        onEdit={() => setEditingCardId(card.id)}
+                        onCancel={() => setEditingCardId(null)}
+                        onSave={updateCard}
+                        onToggle={() => void toggleCard(card)}
+                      />
+                    </ul>
+                  </details>
                 ))}
               </ul>
             </article>
 
-            <article className="panel">
+            <article className="panel settingsIncome">
               <h2>Income Sources</h2>
               <form className="formGrid" onSubmit={submitIncome}>
                 <input placeholder="Income name" value={incomeForm.name} onChange={(event) => setIncomeForm((prev) => ({ ...prev, name: event.target.value }))} required />
@@ -1104,22 +1111,29 @@ export function FinanceApp() {
                 <label className="fieldLabel"><span>End month</span><input type="month" value={incomeForm.endMonth} onChange={(event) => setIncomeForm((prev) => ({ ...prev, endMonth: event.target.value }))} /></label>
                 <button type="submit">Add Income</button>
               </form>
-              <ul>
+              <ul className="accordionList">
                 {data.incomes.map((income) => (
-                  <EditableIncomeRow
-                    key={income.id}
-                    income={income}
-                    isEditing={editingIncomeId === income.id}
-                    onEdit={() => setEditingIncomeId(income.id)}
-                    onCancel={() => setEditingIncomeId(null)}
-                    onSave={updateIncome}
-                    onToggle={() => void toggleIncome(income)}
-                  />
+                  <details key={income.id} className="itemAccordion">
+                    <summary>
+                      <span>{income.name}</span>
+                      <span className="subtle">{income.amount} {income.currency}</span>
+                    </summary>
+                    <ul>
+                      <EditableIncomeRow
+                        income={income}
+                        isEditing={editingIncomeId === income.id}
+                        onEdit={() => setEditingIncomeId(income.id)}
+                        onCancel={() => setEditingIncomeId(null)}
+                        onSave={updateIncome}
+                        onToggle={() => void toggleIncome(income)}
+                      />
+                    </ul>
+                  </details>
                 ))}
               </ul>
             </article>
 
-            <article className="panel">
+            <article className="panel settingsFixed">
               <h2>Fixed Expenses</h2>
               <form className="formGrid" onSubmit={submitFixed}>
                 <input placeholder="Expense name" value={fixedForm.name} onChange={(event) => setFixedForm((prev) => ({ ...prev, name: event.target.value }))} required />
@@ -1132,22 +1146,29 @@ export function FinanceApp() {
                 <label className="fieldLabel"><span>End month</span><input type="month" value={fixedForm.endMonth} onChange={(event) => setFixedForm((prev) => ({ ...prev, endMonth: event.target.value }))} /></label>
                 <button type="submit">Add Fixed</button>
               </form>
-              <ul>
+              <ul className="accordionList">
                 {data.fixedExpenses.map((fixed) => (
-                  <EditableFixedRow
-                    key={fixed.id}
-                    item={fixed}
-                    isEditing={editingFixedId === fixed.id}
-                    onEdit={() => setEditingFixedId(fixed.id)}
-                    onCancel={() => setEditingFixedId(null)}
-                    onSave={updateFixed}
-                    onToggle={() => void toggleFixed(fixed)}
-                  />
+                  <details key={fixed.id} className="itemAccordion">
+                    <summary>
+                      <span>{fixed.name}</span>
+                      <span className="subtle">{fixed.amount} {fixed.currency}</span>
+                    </summary>
+                    <ul>
+                      <EditableFixedRow
+                        item={fixed}
+                        isEditing={editingFixedId === fixed.id}
+                        onEdit={() => setEditingFixedId(fixed.id)}
+                        onCancel={() => setEditingFixedId(null)}
+                        onSave={updateFixed}
+                        onToggle={() => void toggleFixed(fixed)}
+                      />
+                    </ul>
+                  </details>
                 ))}
               </ul>
             </article>
 
-            <article className="panel">
+            <article className="panel settingsExpectations">
               <h2>Expected Card Spending (Payment Month)</h2>
               <form className="formGrid" onSubmit={submitExpectation}>
                 <select value={expectationForm.cardId} onChange={(event) => setExpectationForm((prev) => ({ ...prev, cardId: event.target.value }))} required>
@@ -1168,24 +1189,31 @@ export function FinanceApp() {
                 <p className="subtle">No current/future expectations yet.</p>
               ) : (
                 <div className="expectationAccordionStack">
-                  {expectationGroups.map((group, index) => (
-                    <details key={group.card.id} className="expectationAccordion" open={index === 0}>
+                  {expectationGroups.map((group) => (
+                    <details key={group.card.id} className="expectationAccordion">
                       <summary>
                         <span>{group.card.name}</span>
                         <span className="subtle">{group.rows.length} month{group.rows.length === 1 ? "" : "s"}</span>
                       </summary>
-                      <ul>
+                      <ul className="accordionList">
                         {group.rows.map((row) => (
-                          <EditableExpectationRow
-                            key={row.id}
-                            row={row}
-                            cards={data.cards}
-                            isEditing={editingExpectationId === row.id}
-                            onEdit={() => setEditingExpectationId(row.id)}
-                            onCancel={() => setEditingExpectationId(null)}
-                            onSave={updateExpectation}
-                            onDelete={() => void deleteExpectation(row.id)}
-                          />
+                          <details key={row.id} className="itemAccordion">
+                            <summary>
+                              <span>{toMonthLabel(row.month)}</span>
+                              <span className="subtle">{row.amount} {row.currency}</span>
+                            </summary>
+                            <ul>
+                              <EditableExpectationRow
+                                row={row}
+                                cards={data.cards}
+                                isEditing={editingExpectationId === row.id}
+                                onEdit={() => setEditingExpectationId(row.id)}
+                                onCancel={() => setEditingExpectationId(null)}
+                                onSave={updateExpectation}
+                                onDelete={() => void deleteExpectation(row.id)}
+                              />
+                            </ul>
+                          </details>
                         ))}
                       </ul>
                     </details>
@@ -1194,7 +1222,7 @@ export function FinanceApp() {
               )}
             </article>
 
-            <article className="panel">
+            <article className="panel settingsAdvancements">
               <h2>Advancements (Affect Next Month)</h2>
               <form className="formGrid" onSubmit={submitAdvancement}>
                 <label className="fieldLabel"><span>Advancement month</span><input type="month" value={advancementForm.month} onChange={(event) => setAdvancementForm((prev) => ({ ...prev, month: event.target.value }))} required /></label>
@@ -1206,23 +1234,30 @@ export function FinanceApp() {
                 <input placeholder="Note (optional)" value={advancementForm.note} onChange={(event) => setAdvancementForm((prev) => ({ ...prev, note: event.target.value }))} />
                 <button type="submit">Add Advancement</button>
               </form>
-              <ul>
+              <ul className="accordionList">
                 {data.advancements.map((row) => (
-                  <EditableAdvancementRow
-                    key={row.id}
-                    row={row}
-                    isEditing={editingAdvancementId === row.id}
-                    onEdit={() => setEditingAdvancementId(row.id)}
-                    onCancel={() => setEditingAdvancementId(null)}
-                    onSave={updateAdvancement}
-                    onToggle={() => void updateAdvancement({ id: row.id, isActive: !row.isActive })}
-                    onDelete={() => void deleteAdvancement(row.id)}
-                  />
+                  <details key={row.id} className="itemAccordion">
+                    <summary>
+                      <span>{toMonthLabel(row.month)}</span>
+                      <span className="subtle">{row.amount} {row.currency}</span>
+                    </summary>
+                    <ul>
+                      <EditableAdvancementRow
+                        row={row}
+                        isEditing={editingAdvancementId === row.id}
+                        onEdit={() => setEditingAdvancementId(row.id)}
+                        onCancel={() => setEditingAdvancementId(null)}
+                        onSave={updateAdvancement}
+                        onToggle={() => void updateAdvancement({ id: row.id, isActive: !row.isActive })}
+                        onDelete={() => void deleteAdvancement(row.id)}
+                      />
+                    </ul>
+                  </details>
                 ))}
               </ul>
             </article>
 
-            <article className="panel">
+            <article className="panel settingsExchange">
               <h2>Exchange Rate (ARS per USD)</h2>
               <form className="formGrid" onSubmit={submitRate}>
                 <input type="date" value={rateForm.date} onChange={(event) => setRateForm((prev) => ({ ...prev, date: event.target.value }))} required />
@@ -1230,9 +1265,17 @@ export function FinanceApp() {
                 <button type="submit">Save Rate</button>
                 <button type="button" className="secondary" onClick={() => void syncRate()}>Fetch from API</button>
               </form>
-              <ul>
+              <ul className="accordionList">
                 {data.exchangeRates.slice(0, 20).map((rate) => (
-                  <li key={rate.date} className="listRow"><span>{rate.date} - {rate.arsPerUsd.toFixed(4)} ({rate.source ?? "manual"})</span></li>
+                  <details key={rate.date} className="itemAccordion">
+                    <summary>
+                      <span>{rate.date}</span>
+                      <span className="subtle">{rate.arsPerUsd.toFixed(4)}</span>
+                    </summary>
+                    <div className="listRow">
+                      <span>Source: {rate.source ?? "manual"}</span>
+                    </div>
+                  </details>
                 ))}
               </ul>
             </article>
