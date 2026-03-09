@@ -1022,9 +1022,9 @@ export function FinanceApp() {
               <thead>
                 <tr>
                   <th>Card</th>
-                  <th>Current Spending</th>
-                  <th>Expected Payment Month</th>
                   <th>Remaining</th>
+                  <th>Expected Payment Month</th>
+                  <th>Current Spending</th>
                   <th>Last Expense</th>
                 </tr>
               </thead>
@@ -1037,9 +1037,11 @@ export function FinanceApp() {
                         {trackerStatus(row) === "over" ? "Over limit" : trackerStatus(row) === "warning" ? "Near limit" : trackerStatus(row) === "ok" ? "Healthy" : "No target"}
                       </span>
                     </td>
-                    <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.currentCycleUsd) : ARS_FORMAT.format(row.currentCycleArs)}</td>
+                    <td className={`trackerRemaining tracker-${trackerStatus(row)}`}>
+                      {displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}
+                    </td>
                     <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.expectedCycleUsd) : ARS_FORMAT.format(row.expectedCycleArs)}</td>
-                    <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}</td>
+                    <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.currentCycleUsd) : ARS_FORMAT.format(row.currentCycleArs)}</td>
                     <td>{toLocalDateTimeLabel(row.lastExpenseDate)}</td>
                   </tr>
                 ))}
@@ -1052,14 +1054,14 @@ export function FinanceApp() {
                   <p className={`trackerBadge tracker-${trackerStatus(row)}`}>
                     {trackerStatus(row) === "over" ? "Over limit" : trackerStatus(row) === "warning" ? "Near limit" : trackerStatus(row) === "ok" ? "Healthy margin" : "No target"}
                   </p>
-                  <p className="mobileMain">
-                    {displayCurrency === "USD" ? USD_FORMAT.format(row.currentCycleUsd) : ARS_FORMAT.format(row.currentCycleArs)}
+                  <p className={`mobileMain trackerRemaining tracker-${trackerStatus(row)}`}>
+                    {displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}
                   </p>
-                  <p className="subtle">Current spending</p>
+                  <p className="subtle">Remaining to spend</p>
                   <details>
                     <summary>Details</summary>
                     <p>Expected: {displayCurrency === "USD" ? USD_FORMAT.format(row.expectedCycleUsd) : ARS_FORMAT.format(row.expectedCycleArs)}</p>
-                    <p>Remaining: {displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}</p>
+                    <p>Current spending: {displayCurrency === "USD" ? USD_FORMAT.format(row.currentCycleUsd) : ARS_FORMAT.format(row.currentCycleArs)}</p>
                     <p>Last expense: {toLocalDateTimeLabel(row.lastExpenseDate)}</p>
                   </details>
                 </article>

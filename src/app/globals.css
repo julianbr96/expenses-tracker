@@ -545,6 +545,15 @@ table {
   word-break: break-word;
 }
 
+.trackerRemaining {
+  font-weight: 800;
+  font-size: 1.08rem;
+}
+
+td.trackerRemaining {
+  font-size: 1.12rem;
+}
+
 .mobileInline {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
