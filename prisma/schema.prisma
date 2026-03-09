@@ -159,6 +159,7 @@ model User {
   adjustments   MonthlyAdjustment[]
   advancements  Advancement[]
   refreshTokens AuthRefreshToken[]
+  telegramSessions TelegramSession[]
 }
 
 model AuthRefreshToken {
@@ -175,6 +176,7 @@ model AuthRefreshToken {
 
 model TelegramSession {
   chatId              BigInt   @id
+  userId              String?
   step                String   @default("IDLE")
   pendingCardId       String?
   pendingAmount       Decimal? @db.Decimal(14, 2)
@@ -183,6 +185,8 @@ model TelegramSession {
   pendingDescription  String?
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
+  user                User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([updatedAt])
+  @@index([userId, updatedAt])
 }

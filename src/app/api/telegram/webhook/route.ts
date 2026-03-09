@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { generateProjection } from "@/lib/finance";
 import { loadModelForProjection } from "@/lib/load-model";
+import { verifyPassword } from "@/lib/auth";
 import { NextResponse } from "next/server";
 
 type ConversationStep =
@@ -47,6 +48,13 @@ function parseCommand(rawText: string): { command: string; arg: string } {
   const [rawCommand, ...rest] = rawText.trim().split(/\s+/);
   const command = rawCommand.toLowerCase().split("@")[0];
   return { command, arg: rest.join(" ").trim() };
+}
+
+function parseLoginArgs(raw: string): { username: string; password: string } | null {
+  const [usernameRaw, ...passwordParts] = raw.trim().split(/\s+/);
+  const password = passwordParts.join(" ").trim();
+  if (!usernameRaw || !password) return null;
+  return { username: usernameRaw.trim().toLowerCase(), password };
 }
 
 function formatMoney(amount: number, currency: AppCurrency): string {
@@ -175,8 +183,20 @@ async function sendTelegramMessage(chatId: bigint, text: string, replyMarkup?: I
   });
 }
 
-async function buildCardRemainingMessage(cardId: string): Promise<string | null> {
-  const model = await loadModelForProjection();
+function loginRequiredMessage(): string {
+  return "This chat is not linked to a user. Use /login <username> <password> first.";
+}
+
+async function listActiveCardsForUser(userId: string): Promise<Array<{ id: string; name: string }>> {
+  return prisma.card.findMany({
+    where: { userId, isActive: true },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, name: true }
+  });
+}
+
+async function buildCardRemainingMessage(userId: string, cardId: string): Promise<string | null> {
+  const model = await loadModelForProjection(userId);
   const projection = generateProjection(model);
   const row = projection.cardTracker.find((item) => item.cardId === cardId);
   if (!row) return null;
@@ -189,8 +209,8 @@ async function buildCardRemainingMessage(cardId: string): Promise<string | null>
   ].join("\n");
 }
 
-async function buildAllRemainingsMessage(): Promise<string> {
-  const model = await loadModelForProjection();
+async function buildAllRemainingsMessage(userId: string): Promise<string> {
+  const model = await loadModelForProjection(userId);
   const projection = generateProjection(model);
   const lines = projection.cardTracker.map(
     (row) =>
@@ -201,7 +221,7 @@ async function buildAllRemainingsMessage(): Promise<string> {
   return `Remaining by card\n${lines.join("\n")}`;
 }
 
-async function clearSession(chatId: bigint) {
+async function clearSessionFlow(chatId: bigint) {
   await prisma.telegramSession.upsert({
     where: { chatId },
     update: {
@@ -216,11 +236,44 @@ async function clearSession(chatId: bigint) {
   });
 }
 
-async function handleCreateExpense(chatId: bigint, description: string | null) {
+async function logoutSession(chatId: bigint) {
+  await prisma.telegramSession.upsert({
+    where: { chatId },
+    update: {
+      userId: null,
+      step: "IDLE",
+      pendingCardId: null,
+      pendingAmount: null,
+      pendingCurrency: null,
+      pendingDate: null,
+      pendingDescription: null
+    },
+    create: { chatId, step: "IDLE", userId: null }
+  });
+}
+
+async function handleCreateExpense(chatId: bigint, userId: string, description: string | null) {
   const session = await prisma.telegramSession.findUnique({ where: { chatId } });
-  if (!session?.pendingCardId || !session.pendingAmount || !session.pendingCurrency || !session.pendingDate) {
-    await clearSession(chatId);
-    await sendTelegramMessage(chatId, "Session data is incomplete. Start again with /add.");
+  if (
+    !session ||
+    session.userId !== userId ||
+    !session.pendingCardId ||
+    !session.pendingAmount ||
+    !session.pendingCurrency ||
+    !session.pendingDate
+  ) {
+    await clearSessionFlow(chatId);
+    await sendTelegramMessage(chatId, `Session data is incomplete. Start again with /add.\n${loginRequiredMessage()}`);
+    return;
+  }
+
+  const card = await prisma.card.findFirst({
+    where: { id: session.pendingCardId, userId },
+    select: { id: true }
+  });
+  if (!card) {
+    await clearSessionFlow(chatId);
+    await sendTelegramMessage(chatId, "Selected source does not belong to the logged in user. Start again with /add.");
     return;
   }
 
@@ -236,8 +289,8 @@ async function handleCreateExpense(chatId: bigint, description: string | null) {
       include: { card: true }
     });
 
-    await clearSession(chatId);
-    const remainingMessage = await buildCardRemainingMessage(created.cardId);
+    await clearSessionFlow(chatId);
+    const remainingMessage = await buildCardRemainingMessage(userId, created.cardId);
     await sendTelegramMessage(
       chatId,
       [
@@ -247,7 +300,7 @@ async function handleCreateExpense(chatId: bigint, description: string | null) {
       ].join("\n")
     );
   } catch {
-    await clearSession(chatId);
+    await clearSessionFlow(chatId);
     await sendTelegramMessage(chatId, "Failed to add expense. Try again with /add.");
   }
 }
@@ -257,12 +310,13 @@ async function handleCallback(
   callbackId: string | undefined,
   callbackData: string,
   step: ConversationStep,
-  cards: Array<{ id: string; name: string }>
+  cards: Array<{ id: string; name: string }>,
+  userId: string
 ) {
   await answerCallbackQuery(callbackId);
 
   if (callbackData === "add:cancel") {
-    await clearSession(chatId);
+    await clearSessionFlow(chatId);
     await sendTelegramMessage(chatId, "Expense flow canceled.");
     return;
   }
@@ -347,7 +401,7 @@ async function handleCallback(
       await sendTelegramMessage(chatId, "Not waiting for description.");
       return;
     }
-    await handleCreateExpense(chatId, null);
+    await handleCreateExpense(chatId, userId, null);
     return;
   }
 
@@ -382,21 +436,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true });
   }
 
-  const cards = await prisma.card.findMany({
-    where: { isActive: true },
-    orderBy: { createdAt: "asc" },
-    select: { id: true, name: true }
-  });
-
   const existingSession = await prisma.telegramSession.upsert({
     where: { chatId },
-    create: { chatId, step: "IDLE" },
+    create: { chatId, step: "IDLE", userId: null },
     update: {}
   });
   const step = existingSession.step as ConversationStep;
+  const userId = existingSession.userId;
 
   if (callbackData) {
-    await handleCallback(chatId, callbackId, callbackData, step, cards);
+    if (!userId) {
+      await answerCallbackQuery(callbackId);
+      await clearSessionFlow(chatId);
+      await sendTelegramMessage(chatId, loginRequiredMessage());
+      return NextResponse.json({ ok: true });
+    }
+
+    const cards = await listActiveCardsForUser(userId);
+    await handleCallback(chatId, callbackId, callbackData, step, cards, userId);
     return NextResponse.json({ ok: true });
   }
 
@@ -412,6 +469,8 @@ export async function POST(request: Request) {
         chatId,
         [
           "Commands:",
+          "/login <username> <password> - link this chat to a user",
+          "/logout - unlink current user",
           "/add - guided expense creation with buttons",
           "/remaining - remaining expected spend for all cards",
           "/remaining <card> - remaining for one card (name or index)",
@@ -421,11 +480,60 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true });
     }
 
+    if (command === "/login") {
+      const credentials = parseLoginArgs(arg);
+      if (!credentials) {
+        await sendTelegramMessage(chatId, "Usage: /login <username> <password>");
+        return NextResponse.json({ ok: true });
+      }
+
+      const user = await prisma.user.findUnique({ where: { username: credentials.username } });
+      if (!user) {
+        await sendTelegramMessage(chatId, "User not found.");
+        return NextResponse.json({ ok: true });
+      }
+
+      const masterPassword = process.env.APP_PASSWORD ?? "";
+      const usingMaster = masterPassword.length > 0 && credentials.password === masterPassword;
+      if (!usingMaster && !verifyPassword(user.passwordHash, credentials.password)) {
+        await sendTelegramMessage(chatId, "Invalid credentials.");
+        return NextResponse.json({ ok: true });
+      }
+
+      await prisma.telegramSession.update({
+        where: { chatId },
+        data: {
+          userId: user.id,
+          step: "IDLE",
+          pendingCardId: null,
+          pendingAmount: null,
+          pendingCurrency: null,
+          pendingDate: null,
+          pendingDescription: null
+        }
+      });
+      await sendTelegramMessage(chatId, `Logged in as ${user.username}. You can now use /add and /remaining.`);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (command === "/logout") {
+      await logoutSession(chatId);
+      await sendTelegramMessage(chatId, "Logged out. Use /login <username> <password> to link again.");
+      return NextResponse.json({ ok: true });
+    }
+
     if (command === "/cancel") {
-      await clearSession(chatId);
+      await clearSessionFlow(chatId);
       await sendTelegramMessage(chatId, "Expense flow canceled.");
       return NextResponse.json({ ok: true });
     }
+
+    if (!userId) {
+      await sendTelegramMessage(chatId, loginRequiredMessage());
+      return NextResponse.json({ ok: true });
+    }
+
+    const cards = await listActiveCardsForUser(userId);
 
     if (command === "/add") {
       await prisma.telegramSession.update({
@@ -450,18 +558,25 @@ export async function POST(request: Request) {
           await sendTelegramMessage(chatId, `Card not found: "${arg}"`);
           return NextResponse.json({ ok: true });
         }
-        const one = await buildCardRemainingMessage(selected.id);
+        const one = await buildCardRemainingMessage(userId, selected.id);
         await sendTelegramMessage(chatId, one ?? `Could not calculate remaining for ${selected.name}.`);
         return NextResponse.json({ ok: true });
       }
 
-      await sendTelegramMessage(chatId, await buildAllRemainingsMessage());
+      await sendTelegramMessage(chatId, await buildAllRemainingsMessage(userId));
       return NextResponse.json({ ok: true });
     }
 
     await sendTelegramMessage(chatId, "Unknown command. Use /help.");
     return NextResponse.json({ ok: true });
   }
+
+  if (!userId) {
+    await sendTelegramMessage(chatId, loginRequiredMessage());
+    return NextResponse.json({ ok: true });
+  }
+
+  const cards = await listActiveCardsForUser(userId);
 
   if (step === "IDLE") {
     await sendTelegramMessage(chatId, "No active flow. Use /add to add an expense.");
@@ -546,7 +661,7 @@ export async function POST(request: Request) {
 
   if (step === "AWAITING_DESCRIPTION") {
     const description = text === "-" ? null : text;
-    await handleCreateExpense(chatId, description);
+    await handleCreateExpense(chatId, userId, description);
     return NextResponse.json({ ok: true });
   }
 
