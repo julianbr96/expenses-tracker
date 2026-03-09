@@ -12,6 +12,7 @@ import {
 
 type Currency = "USD" | "ARS";
 type Tab = "dashboard" | "tracker" | "expenses" | "forecast" | "settings";
+type ExpenseDisplayMode = "STORED" | Currency;
 
 function sourceTypeOptionLabel(value: SourceType | string | null | undefined, name: string): string {
   const SELECT_STYLE: "emoji" | "text" = "emoji";
@@ -162,6 +163,15 @@ const ARS_FORMAT = new Intl.NumberFormat("es-AR", {
   maximumFractionDigits: 2
 });
 
+function formatCodeAmount(amount: number, currency: Currency): string {
+  const locale = currency === "ARS" ? "es-AR" : "en-US";
+  const formatted = new Intl.NumberFormat(locale, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  }).format(amount);
+  return `${currency} ${formatted}`;
+}
+
 const MONTH_FORMAT = new Intl.DateTimeFormat("en-US", {
   month: "short",
   year: "numeric",
@@ -264,6 +274,7 @@ export function FinanceApp() {
 
   const [expenseFilterCard, setExpenseFilterCard] = useState<string>("all");
   const [expenseFilterMonth, setExpenseFilterMonth] = useState<string>("all");
+  const [expenseDisplayMode, setExpenseDisplayMode] = useState<ExpenseDisplayMode>("STORED");
   const [expenseDateTouched, setExpenseDateTouched] = useState(false);
 
   const [expenseForm, setExpenseForm] = useState({
@@ -639,6 +650,7 @@ export function FinanceApp() {
 
   function renderTopActionSwitcher(forceMenu = false) {
     const isMenuMode = forceMenu || topActionMode === "menu";
+    const isExpensesTab = activeTab === "expenses";
     return (
       <div className="currencyToggle actionSwitcher">
         {isMenuMode ? (
@@ -650,6 +662,13 @@ export function FinanceApp() {
             <button className="secondary logoutInlineBtn" disabled={isLoggingOut} onClick={() => void logout()}>
               {isLoggingOut ? "Logging out..." : "Logout"}
             </button>
+          </>
+        ) : isExpensesTab ? (
+          <>
+            <span>Amount</span>
+            <button className={`currencyBtn ${expenseDisplayMode === "STORED" ? "active" : ""}`} onClick={() => setExpenseDisplayMode("STORED")}>Stored</button>
+            <button className={`currencyBtn ${expenseDisplayMode === "USD" ? "active" : ""}`} onClick={() => setExpenseDisplayMode("USD")}>USD</button>
+            <button className={`currencyBtn ${expenseDisplayMode === "ARS" ? "active" : ""}`} onClick={() => setExpenseDisplayMode("ARS")}>ARS</button>
           </>
         ) : (
           <>
@@ -1164,6 +1183,8 @@ export function FinanceApp() {
                       key={expense.id}
                       expense={expense}
                       cards={data.cards}
+                      expenseDisplayMode={expenseDisplayMode}
+                      arsPerUsd={data.projection.currentRateArsPerUsd}
                       isEditing={editingExpenseId === expense.id}
                       onStartEdit={() => setEditingExpenseId(expense.id)}
                       onCancelEdit={() => setEditingExpenseId(null)}
@@ -1179,6 +1200,8 @@ export function FinanceApp() {
                     key={expense.id}
                     expense={expense}
                     cards={data.cards}
+                    expenseDisplayMode={expenseDisplayMode}
+                    arsPerUsd={data.projection.currentRateArsPerUsd}
                     onSave={updateExpense}
                     onDelete={deleteExpense}
                   />
@@ -1535,9 +1558,11 @@ export function FinanceApp() {
   );
 }
 
-function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSave, onDelete }: {
+function ExpenseRow({ expense, cards, expenseDisplayMode, arsPerUsd, isEditing, onStartEdit, onCancelEdit, onSave, onDelete }: {
   expense: Expense;
   cards: Card[];
+  expenseDisplayMode: ExpenseDisplayMode;
+  arsPerUsd: number;
   isEditing: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
@@ -1545,6 +1570,16 @@ function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSa
   onDelete: (id: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(expense);
+  const targetCurrency = expenseDisplayMode === "STORED" ? expense.currency : expenseDisplayMode;
+  const convertedAmount =
+    targetCurrency === expense.currency
+      ? expense.amount
+      : expense.currency === "USD"
+        ? expense.amount * arsPerUsd
+        : expense.amount / arsPerUsd;
+  const mainLabel = targetCurrency === "USD" ? USD_FORMAT.format(convertedAmount) : ARS_FORMAT.format(convertedAmount);
+  const originalLabel = formatCodeAmount(expense.amount, expense.currency);
+  const showOriginal = expenseDisplayMode !== "STORED";
 
   useEffect(() => {
     setDraft(expense);
@@ -1567,7 +1602,12 @@ function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSa
     <tr>
       <td>{expense.date}</td>
       <td><SourceBadge sourceType={expense.card.sourceType} /> {expense.card.name}</td>
-      <td>{expense.amount.toFixed(2)}</td>
+      <td>
+        <div className="amountCell">
+          <span>{mainLabel}</span>
+          {showOriginal ? <small className="subtle">Real: {originalLabel}</small> : null}
+        </div>
+      </td>
       <td>{expense.currency}</td>
       <td>{expense.description || "-"}</td>
       <td className="rowButtons"><button onClick={onStartEdit}>Edit</button><button className="secondary" onClick={() => void onDelete(expense.id)}>Delete</button></td>
@@ -1578,16 +1618,30 @@ function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSa
 function MobileExpenseCard({
   expense,
   cards,
+  expenseDisplayMode,
+  arsPerUsd,
   onSave,
   onDelete
 }: {
   expense: Expense;
   cards: Card[];
+  expenseDisplayMode: ExpenseDisplayMode;
+  arsPerUsd: number;
   onSave: (expense: Expense, originalDate: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState(expense);
+  const targetCurrency = expenseDisplayMode === "STORED" ? expense.currency : expenseDisplayMode;
+  const convertedAmount =
+    targetCurrency === expense.currency
+      ? expense.amount
+      : expense.currency === "USD"
+        ? expense.amount * arsPerUsd
+        : expense.amount / arsPerUsd;
+  const mainLabel = targetCurrency === "USD" ? USD_FORMAT.format(convertedAmount) : ARS_FORMAT.format(convertedAmount);
+  const originalLabel = formatCodeAmount(expense.amount, expense.currency);
+  const showOriginal = expenseDisplayMode !== "STORED";
 
   useEffect(() => {
     setDraft(expense);
@@ -1620,7 +1674,8 @@ function MobileExpenseCard({
   return (
     <article className="mobileCard">
       <h3><SourceBadge sourceType={expense.card.sourceType} /> {expense.card.name}</h3>
-      <p className="mobileMain">{expense.amount.toFixed(2)} {expense.currency}</p>
+      <p className="mobileMain">{mainLabel}</p>
+      {showOriginal ? <p className="subtle">Real: {originalLabel}</p> : null}
       <p className="subtle">{expense.date}</p>
       <details>
         <summary>Details</summary>

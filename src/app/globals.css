@@ -752,6 +752,11 @@ th {
   margin: 0;
 }
 
+.amountCell {
+  display: grid;
+  gap: 2px;
+}
+
 .listRow {
   display: flex;
   justify-content: space-between;
