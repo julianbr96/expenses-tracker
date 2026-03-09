@@ -502,7 +502,62 @@ table {
 }
 
 .trackerName {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.sourceBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.1;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.16);
+  color: #2a3140;
+}
+
+.sourceBadgeIcon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+}
+
+.sourceType-credit_card {
+  background: rgba(80, 104, 190, 0.2);
+  color: #2d3f86;
+}
+
+.sourceType-debit_card {
+  background: rgba(93, 129, 178, 0.2);
+  color: #274a6e;
+}
+
+.sourceType-bank_account {
+  background: rgba(113, 118, 150, 0.2);
+  color: #3d435e;
+}
+
+.sourceType-prepaid {
+  background: rgba(135, 103, 181, 0.2);
+  color: #533674;
+}
+
+.sourceType-cash {
+  background: rgba(151, 128, 99, 0.2);
+  color: #5e4730;
+}
+
+.sourceType-other {
+  background: rgba(126, 126, 126, 0.2);
+  color: #4b4b4b;
 }
 
 .tracker-ok {
@@ -688,6 +743,13 @@ th {
   flex-wrap: wrap;
   gap: 8px;
   margin-bottom: 10px;
+}
+
+.sourcePreview {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
 }
 
 .listRow {

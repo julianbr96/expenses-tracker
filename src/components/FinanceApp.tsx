@@ -1,32 +1,30 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  SOURCE_TYPE_OPTIONS,
+  SourceTypeGlyph,
+  sourceTypeLabel,
+  sourceTypeMeta,
+  sourceTypeSelectLabel,
+  type SourceType
+} from "@/lib/sourceTypes";
 
 type Currency = "USD" | "ARS";
-type SourceType = "CREDIT_CARD" | "DEBIT_CARD" | "BANK_ACCOUNT" | "PREPAID" | "CASH" | "OTHER";
 type Tab = "dashboard" | "tracker" | "expenses" | "forecast" | "settings";
-const SOURCE_TYPE_OPTIONS: Array<{ value: SourceType; label: string; icon: string }> = [
-  { value: "CREDIT_CARD", label: "Credit Card", icon: "[CC]" },
-  { value: "DEBIT_CARD", label: "Debit Card", icon: "[DB]" },
-  { value: "BANK_ACCOUNT", label: "Bank Account", icon: "[BA]" },
-  { value: "PREPAID", label: "Prepaid", icon: "[PP]" },
-  { value: "CASH", label: "Cash", icon: "[CA]" },
-  { value: "OTHER", label: "Other", icon: "[OT]" }
-];
 
-function sourceTypeLabel(value: SourceType | string | null | undefined): string {
-  if (!value) return "Credit Card";
-  return SOURCE_TYPE_OPTIONS.find((option) => option.value === value)?.label ?? "Other";
+function sourceTypeOptionLabel(value: SourceType | string | null | undefined, name: string): string {
+  const SELECT_STYLE: "emoji" | "text" = "emoji";
+  return sourceTypeSelectLabel(value, name, SELECT_STYLE);
 }
 
-function sourceTypeIcon(value: SourceType | string | null | undefined): string {
-  if (!value) return "[CC]";
-  return SOURCE_TYPE_OPTIONS.find((option) => option.value === value)?.icon ?? "[OT]";
+function findCardById(cards: Card[], cardId: string): Card | undefined {
+  return cards.find((card) => card.id === cardId);
 }
 
 const MOBILE_TABS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: "dashboard", label: "Home", icon: "◉" },
-  { id: "tracker", label: "Cards", icon: "◈" },
+  { id: "tracker", label: "Tracking", icon: "◈" },
   { id: "expenses", label: "Expenses", icon: "◎" },
   { id: "forecast", label: "Forecast", icon: "◌" },
   { id: "settings", label: "Settings", icon: "◍" }
@@ -639,16 +637,11 @@ export function FinanceApp() {
     }
   }
 
-  function renderTopActionSwitcher() {
+  function renderTopActionSwitcher(forceMenu = false) {
+    const isMenuMode = forceMenu || topActionMode === "menu";
     return (
       <div className="currencyToggle actionSwitcher">
-        {topActionMode === "currency" ? (
-          <>
-            <span>Currency</span>
-            <button className={`currencyBtn ${displayCurrency === "USD" ? "active" : ""}`} onClick={() => setDisplayCurrency("USD")}>USD</button>
-            <button className={`currencyBtn ${displayCurrency === "ARS" ? "active" : ""}`} onClick={() => setDisplayCurrency("ARS")}>ARS</button>
-          </>
-        ) : (
+        {isMenuMode ? (
           <>
             <span className="syncStatus">Synced {formatLastSync(lastSyncedAt)}</span>
             <button className="secondary syncInlineBtn" disabled={isSyncing} onClick={() => void syncNow()}>
@@ -658,15 +651,23 @@ export function FinanceApp() {
               {isLoggingOut ? "Logging out..." : "Logout"}
             </button>
           </>
+        ) : (
+          <>
+            <span>Currency</span>
+            <button className={`currencyBtn ${displayCurrency === "USD" ? "active" : ""}`} onClick={() => setDisplayCurrency("USD")}>USD</button>
+            <button className={`currencyBtn ${displayCurrency === "ARS" ? "active" : ""}`} onClick={() => setDisplayCurrency("ARS")}>ARS</button>
+          </>
         )}
-        <button
-          type="button"
-          className="menuToggleBtn"
-          onClick={() => setTopActionMode((prev) => (prev === "currency" ? "menu" : "currency"))}
-          aria-label="Toggle quick actions"
-        >
-          {topActionMode === "currency" ? "⚙" : "←"}
-        </button>
+        {!forceMenu ? (
+          <button
+            type="button"
+            className="menuToggleBtn"
+            onClick={() => setTopActionMode((prev) => (prev === "currency" ? "menu" : "currency"))}
+            aria-label="Toggle quick actions"
+          >
+            {topActionMode === "currency" ? "⚙" : "←"}
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -985,18 +986,18 @@ export function FinanceApp() {
         <div className="toolbar">
           <div className="tabs">
             <button className={activeTab === "dashboard" ? "active" : ""} onClick={() => setActiveTab("dashboard")}>Dashboard</button>
-            <button className={activeTab === "tracker" ? "active" : ""} onClick={() => setActiveTab("tracker")}>Credit Card Tracker</button>
+            <button className={activeTab === "tracker" ? "active" : ""} onClick={() => setActiveTab("tracker")}>All Expense Tracking</button>
             <button className={activeTab === "expenses" ? "active" : ""} onClick={() => setActiveTab("expenses")}>Expense Log</button>
             <button className={activeTab === "forecast" ? "active" : ""} onClick={() => setActiveTab("forecast")}>Forecast</button>
             <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>Settings</button>
           </div>
-          <div className="toolbarRight">{renderTopActionSwitcher()}</div>
+          <div className="toolbarRight">{renderTopActionSwitcher(activeTab === "settings")}</div>
         </div>
       </div>
 
       <div className={`mobileOnly topStickyMobile ${topDocked ? "isDocked" : ""}`}>
         <div className="mobileTopBar">
-          {renderTopActionSwitcher()}
+          {renderTopActionSwitcher(activeTab === "settings")}
         </div>
       </div>
 
@@ -1054,7 +1055,8 @@ export function FinanceApp() {
                   <tr key={row.cardId} className={`trackerRow tracker-${trackerStatus(row)}`}>
                     <td>
                       <span className="trackerName">
-                        {sourceTypeIcon(data.cards.find((card) => card.id === row.cardId)?.sourceType ?? "CREDIT_CARD")} {row.cardName}
+                        <SourceBadge sourceType={data.cards.find((card) => card.id === row.cardId)?.sourceType} />
+                        {row.cardName}
                       </span>
                       <span className={`trackerBadge tracker-${trackerStatus(row)}`}>
                         {trackerStatus(row) === "over" ? "Over limit" : trackerStatus(row) === "warning" ? "Near limit" : trackerStatus(row) === "ok" ? "Healthy" : "No target"}
@@ -1073,7 +1075,7 @@ export function FinanceApp() {
             <div className="mobileOnly">
               {data.projection.cardTracker.map((row) => (
                 <article key={row.cardId} className={`mobileCard tracker-${trackerStatus(row)}`}>
-                  <h3>{sourceTypeIcon(data.cards.find((card) => card.id === row.cardId)?.sourceType ?? "CREDIT_CARD")} {row.cardName}</h3>
+                  <h3><SourceBadge sourceType={data.cards.find((card) => card.id === row.cardId)?.sourceType} /> {row.cardName}</h3>
                   <p className={`trackerBadge tracker-${trackerStatus(row)}`}>
                     {trackerStatus(row) === "over" ? "Over limit" : trackerStatus(row) === "warning" ? "Near limit" : trackerStatus(row) === "ok" ? "Healthy margin" : "No target"}
                   </p>
@@ -1109,7 +1111,7 @@ export function FinanceApp() {
                 />
                 <select value={expenseForm.cardId} onChange={(event) => setExpenseForm((prev) => ({ ...prev, cardId: event.target.value }))} required>
                   {data.cards.map((card) => (
-                    <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>
+                    <option key={card.id} value={card.id}>{sourceTypeOptionLabel(card.sourceType, card.name)}</option>
                   ))}
                 </select>
                 <input type="number" step="0.01" placeholder="Amount" value={expenseForm.amount} onChange={(event) => setExpenseForm((prev) => ({ ...prev, amount: event.target.value }))} required />
@@ -1126,11 +1128,18 @@ export function FinanceApp() {
               <h2>Expense Log</h2>
               <div className="filters">
                 <select value={expenseFilterCard} onChange={(event) => setExpenseFilterCard(event.target.value)}>
-                  <option value="all">All cards</option>
+                  <option value="all">All sources</option>
                   {data.cards.map((card) => (
-                    <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>
+                    <option key={card.id} value={card.id}>{sourceTypeOptionLabel(card.sourceType, card.name)}</option>
                   ))}
                 </select>
+                {expenseFilterCard === "all" ? (
+                  <p className="subtle sourcePreview"><span className="sourceBadge sourceType-other">All Sources</span></p>
+                ) : findCardById(data.cards, expenseFilterCard) ? (
+                  <p className="subtle sourcePreview">
+                    <SourceBadge sourceType={findCardById(data.cards, expenseFilterCard)?.sourceType} />
+                  </p>
+                ) : null}
                 <select value={expenseFilterMonth} onChange={(event) => setExpenseFilterMonth(event.target.value)}>
                   <option value="all">All months</option>
                   {expenseMonths.map((month) => (
@@ -1142,7 +1151,7 @@ export function FinanceApp() {
                 <thead>
                   <tr>
                     <th>Date</th>
-                    <th>Card</th>
+                    <th>Source</th>
                     <th>Amount</th>
                     <th>Currency</th>
                     <th>Description</th>
@@ -1296,7 +1305,7 @@ export function FinanceApp() {
                 </select>
                 <select value={cardForm.sourceType} onChange={(event) => setCardForm((prev) => ({ ...prev, sourceType: event.target.value as SourceType }))}>
                   {SOURCE_TYPE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.icon} {option.label}</option>
+                    <option key={option.value} value={option.value}>{option.emoji} {option.label}</option>
                   ))}
                 </select>
                 <button type="submit">Add Source</button>
@@ -1305,7 +1314,7 @@ export function FinanceApp() {
                 {data.cards.map((card) => (
                   <details key={card.id} className="itemAccordion">
                     <summary>
-                      <span>{sourceTypeIcon(card.sourceType)} {card.name}</span>
+                      <span><SourceBadge sourceType={card.sourceType} /> {card.name}</span>
                       <span className="subtle">{sourceTypeLabel(card.sourceType)} · {card.currency} · {card.isActive ? "active" : "inactive"}</span>
                     </summary>
                     <ul>
@@ -1394,11 +1403,11 @@ export function FinanceApp() {
             </article>
 
             <article className="panel settingsExpectations">
-              <h2>Expected Card Spending (Payment Month)</h2>
+              <h2>Expected Source Spending (Payment Month)</h2>
               <form className="formGrid" onSubmit={submitExpectation}>
                 <select value={expectationForm.cardId} onChange={(event) => setExpectationForm((prev) => ({ ...prev, cardId: event.target.value }))} required>
                   {data.cards.map((card) => (
-                    <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>
+                    <option key={card.id} value={card.id}>{sourceTypeOptionLabel(card.sourceType, card.name)}</option>
                   ))}
                 </select>
                 <label className="fieldLabel"><span>Payment month</span><input type="month" value={expectationForm.month} onChange={(event) => setExpectationForm((prev) => ({ ...prev, month: event.target.value }))} required /></label>
@@ -1417,7 +1426,7 @@ export function FinanceApp() {
                   {expectationGroups.map((group) => (
                     <details key={group.card.id} className="expectationAccordion">
                       <summary>
-                        <span>{sourceTypeIcon(group.card.sourceType)} {group.card.name}</span>
+                        <span><SourceBadge sourceType={group.card.sourceType} /> {group.card.name}</span>
                         <span className="subtle">{group.rows.length} month{group.rows.length === 1 ? "" : "s"}</span>
                       </summary>
                       <ul className="accordionList">
@@ -1545,7 +1554,7 @@ function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSa
     return (
       <tr>
         <td><input type="date" value={draft.date} onChange={(event) => setDraft((prev) => ({ ...prev, date: event.target.value }))} /></td>
-        <td><select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>{cards.map((card) => <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>)}</select></td>
+        <td><select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>{cards.map((card) => <option key={card.id} value={card.id}>{sourceTypeOptionLabel(card.sourceType, card.name)}</option>)}</select></td>
         <td><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /></td>
         <td><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></td>
         <td><input value={draft.description ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))} /></td>
@@ -1557,7 +1566,7 @@ function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSa
   return (
     <tr>
       <td>{expense.date}</td>
-      <td>{sourceTypeIcon(expense.card.sourceType)} {expense.card.name}</td>
+      <td><SourceBadge sourceType={expense.card.sourceType} /> {expense.card.name}</td>
       <td>{expense.amount.toFixed(2)}</td>
       <td>{expense.currency}</td>
       <td>{expense.description || "-"}</td>
@@ -1592,7 +1601,7 @@ function MobileExpenseCard({
           <input type="date" value={draft.date} onChange={(event) => setDraft((prev) => ({ ...prev, date: event.target.value }))} />
           <select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>
             {cards.map((card) => (
-              <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>
+              <option key={card.id} value={card.id}>{sourceTypeOptionLabel(card.sourceType, card.name)}</option>
             ))}
           </select>
           <input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} />
@@ -1610,7 +1619,7 @@ function MobileExpenseCard({
 
   return (
     <article className="mobileCard">
-      <h3>{sourceTypeIcon(expense.card.sourceType)} {expense.card.name}</h3>
+      <h3><SourceBadge sourceType={expense.card.sourceType} /> {expense.card.name}</h3>
       <p className="mobileMain">{expense.amount.toFixed(2)} {expense.currency}</p>
       <p className="subtle">{expense.date}</p>
       <details>
@@ -1622,6 +1631,16 @@ function MobileExpenseCard({
         <button className="secondary" onClick={() => void onDelete(expense.id)}>Delete</button>
       </div>
     </article>
+  );
+}
+
+function SourceBadge({ sourceType }: { sourceType: SourceType | string | null | undefined }) {
+  const meta = sourceTypeMeta(sourceType);
+  return (
+    <span className={`sourceBadge sourceType-${meta.value.toLowerCase()}`}>
+      <SourceTypeGlyph sourceType={meta.value} className="sourceBadgeIcon" />
+      <span>{meta.short}</span>
+    </span>
   );
 }
 
@@ -1647,7 +1666,7 @@ function EditableCardRow({ card, isEditing, onEdit, onCancel, onSave, onToggle }
             </select>
             <select value={draft.sourceType} onChange={(event) => setDraft((prev) => ({ ...prev, sourceType: event.target.value as SourceType }))}>
               {SOURCE_TYPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.icon} {option.label}</option>
+                <option key={option.value} value={option.value}>{option.emoji} {option.label}</option>
               ))}
             </select>
           </div>
@@ -1658,7 +1677,7 @@ function EditableCardRow({ card, isEditing, onEdit, onCancel, onSave, onToggle }
         </>
       ) : (
         <>
-          <span>{sourceTypeIcon(card.sourceType)} {card.name} ({sourceTypeLabel(card.sourceType)} · {card.currency})</span>
+          <span><SourceBadge sourceType={card.sourceType} /> {card.name} ({sourceTypeLabel(card.sourceType)} · {card.currency})</span>
           <div className="rowButtons">
             <button onClick={onEdit}>Edit</button>
             <button className="secondary" onClick={onToggle}>{card.isActive ? "Deactivate" : "Activate"}</button>
@@ -1706,7 +1725,7 @@ function EditableExpectationRow({ row, cards, isEditing, onEdit, onCancel, onSav
 }) {
   const [draft, setDraft] = useState(row);
   useEffect(() => setDraft(row), [row]);
-  return <li className="listRow">{isEditing ? <><div className="inlineForm"><select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>{cards.map((card) => <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>)}</select><label className="fieldLabel"><span>Payment month</span><input type="month" value={draft.month} onChange={(event) => setDraft((prev) => ({ ...prev, month: event.target.value }))} /></label><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></div><div className="rowButtons"><button onClick={() => void onSave({ ...draft, id: row.id })}>Save</button><button className="secondary" onClick={onCancel}>Cancel</button></div></> : <><span>{sourceTypeIcon(row.card.sourceType)} {row.card.name} - {row.month}: {row.amount} {row.currency}</span><div className="rowButtons"><button onClick={onEdit}>Edit</button><button className="secondary" onClick={onDelete}>Delete</button></div></>}</li>;
+  return <li className="listRow">{isEditing ? <><div className="inlineForm"><select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>{cards.map((card) => <option key={card.id} value={card.id}>{sourceTypeOptionLabel(card.sourceType, card.name)}</option>)}</select><label className="fieldLabel"><span>Payment month</span><input type="month" value={draft.month} onChange={(event) => setDraft((prev) => ({ ...prev, month: event.target.value }))} /></label><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></div><div className="rowButtons"><button onClick={() => void onSave({ ...draft, id: row.id })}>Save</button><button className="secondary" onClick={onCancel}>Cancel</button></div></> : <><span><SourceBadge sourceType={row.card.sourceType} /> {row.card.name} - {row.month}: {row.amount} {row.currency}</span><div className="rowButtons"><button onClick={onEdit}>Edit</button><button className="secondary" onClick={onDelete}>Delete</button></div></>}</li>;
 }
 
 function EditableAdvancementRow({ row, isEditing, onEdit, onCancel, onSave, onToggle, onDelete }: {
