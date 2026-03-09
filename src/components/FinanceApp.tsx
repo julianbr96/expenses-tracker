@@ -24,12 +24,12 @@ type ExpenseTimeFilter =
   | "ALL_TIME";
 
 const EXPENSE_TIME_FILTERS: Array<{ value: ExpenseTimeFilter; label: string }> = [
-  { value: "CURRENT_WEEK", label: "Current week" },
   { value: "TODAY", label: "Today" },
+  { value: "CURRENT_WEEK", label: "Current week" },
+  { value: "LAST_7_DAYS", label: "Last 7 days" },
   { value: "CURRENT_MONTH", label: "Current month" },
   { value: "LAST_MONTH", label: "Last month" },
   { value: "LAST_3_MONTHS", label: "Last 3 months" },
-  { value: "LAST_7_DAYS", label: "Last 7 days" },
   { value: "CUSTOM_MONTH", label: "Specific month" },
   { value: "ALL_TIME", label: "All time" }
 ];
