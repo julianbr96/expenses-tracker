@@ -5,6 +5,7 @@ import type { Currency, ProjectionRow } from "@/lib/types";
 interface CardRecord {
   id: string;
   name: string;
+  sourceType?: string;
   isActive: boolean;
 }
 
@@ -214,25 +215,25 @@ function sumAdvancementImpactsByMonth(
 function cardPaymentUsdForMonth(
   paymentMonth: string,
   currentMonth: string,
+  cards: CardRecord[],
   actualByMonthCard: Map<string, Map<string, number>>,
   expectedByMonthCard: Map<string, Map<string, number>>
 ): number {
-  const spendingMonth = addMonths(paymentMonth, -1);
-  const nextMonth = addMonths(currentMonth, 1);
-  const actual = totalMonthCard(actualByMonthCard, spendingMonth);
-  const expectedPayment = totalMonthCard(expectedByMonthCard, paymentMonth);
-
-  if (compareMonth(paymentMonth, currentMonth) < 0) {
-    return actual;
+  // Future months are always expectation-driven.
+  if (compareMonth(paymentMonth, currentMonth) > 0) {
+    return totalMonthCard(expectedByMonthCard, paymentMonth);
   }
 
-  // For current and next payment month, blend real tracked data with expectation gap.
-  // This covers partially tracked months without underestimating card payment egress.
-  if (paymentMonth === currentMonth || paymentMonth === nextMonth) {
-    return actual + Math.max(expectedPayment - actual, 0);
-  }
-
-  return expectedPayment;
+  // Current and past months:
+  // - credit cards consume previous month transactions
+  // - other sources consume same-month transactions
+  const previousMonth = addMonths(paymentMonth, -1);
+  return cards.reduce((acc, card) => {
+    const isCredit = card.sourceType === "CREDIT_CARD";
+    const sourceMonth = isCredit ? previousMonth : paymentMonth;
+    const value = actualByMonthCard.get(sourceMonth)?.get(card.id) ?? 0;
+    return acc + value;
+  }, 0) || totalMonthCard(expectedByMonthCard, paymentMonth);
 }
 
 function monthIncomeUsd(
@@ -281,7 +282,7 @@ export function generateProjection(input: ProjectionInput): ProjectionOutput {
     const advancementImpactUsd = advancementImpactsByMonth.get(month) ?? 0;
     const incomeUsd = monthIncomeUsd(month, input.incomes, rateLookup) + advancementImpactUsd;
     const fixedExpensesUsd = monthFixedUsd(month, input.fixedExpenses, rateLookup);
-    const cardPaymentUsd = cardPaymentUsdForMonth(month, currentMonth, actualByMonthCard, expectedByMonthCard);
+    const cardPaymentUsd = cardPaymentUsdForMonth(month, currentMonth, input.cards, actualByMonthCard, expectedByMonthCard);
     const manualAdjustmentUsd = adjustmentsByMonth.get(month) ?? 0;
 
     const totalExpensesUsd = fixedExpensesUsd + cardPaymentUsd;

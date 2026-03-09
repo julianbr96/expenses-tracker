@@ -17,6 +17,7 @@ export async function loadModelForProjection() {
     cards: cards.map((card) => ({
       id: card.id,
       name: card.name,
+      sourceType: card.sourceType,
       isActive: card.isActive
     })),
     expenses: expenses.map((expense) => ({
