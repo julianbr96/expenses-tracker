@@ -240,6 +240,8 @@ export function FinanceApp() {
   const [debouncedAdjustmentDrafts, setDebouncedAdjustmentDrafts] = useState<Record<string, string>>({});
   const [visiblePastMonths, setVisiblePastMonths] = useState(0);
   const [visibleFutureMonths, setVisibleFutureMonths] = useState(0);
+  const [topDocked, setTopDocked] = useState(false);
+  const headerRef = useRef<HTMLElement | null>(null);
 
   const [expenseFilterCard, setExpenseFilterCard] = useState<string>("all");
   const [expenseFilterMonth, setExpenseFilterMonth] = useState<string>("all");
@@ -383,6 +385,23 @@ export function FinanceApp() {
 
     return () => clearTimeout(timer);
   }, [adjustmentDrafts]);
+
+  useEffect(() => {
+    function updateDock() {
+      const header = headerRef.current;
+      if (!header) return;
+      const bottom = header.getBoundingClientRect().bottom;
+      setTopDocked(bottom <= 12);
+    }
+
+    updateDock();
+    window.addEventListener("scroll", updateDock, { passive: true });
+    window.addEventListener("resize", updateDock);
+    return () => {
+      window.removeEventListener("scroll", updateDock);
+      window.removeEventListener("resize", updateDock);
+    };
+  }, []);
 
   const expenseMonths = useMemo(() => {
     if (!data) return [];
@@ -936,27 +955,31 @@ export function FinanceApp() {
 
   return (
     <main className="container">
-      <header className="header">
+      <header className="header" ref={headerRef}>
         <h1>Personal Finance Forecasting</h1>
         <p>Track expenses now, project next-month cash impact, and reconcile real closes.</p>
       </header>
 
-      <div className="toolbar desktopOnly">
-        <div className="tabs">
-          <button className={activeTab === "dashboard" ? "active" : ""} onClick={() => setActiveTab("dashboard")}>Dashboard</button>
-          <button className={activeTab === "tracker" ? "active" : ""} onClick={() => setActiveTab("tracker")}>Credit Card Tracker</button>
-          <button className={activeTab === "expenses" ? "active" : ""} onClick={() => setActiveTab("expenses")}>Expense Log</button>
-          <button className={activeTab === "forecast" ? "active" : ""} onClick={() => setActiveTab("forecast")}>Forecast</button>
-          <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>Settings</button>
+      <div className={`desktopOnly topSticky ${topDocked ? "isDocked" : ""}`}>
+        <div className="toolbar">
+          <div className="tabs">
+            <button className={activeTab === "dashboard" ? "active" : ""} onClick={() => setActiveTab("dashboard")}>Dashboard</button>
+            <button className={activeTab === "tracker" ? "active" : ""} onClick={() => setActiveTab("tracker")}>Credit Card Tracker</button>
+            <button className={activeTab === "expenses" ? "active" : ""} onClick={() => setActiveTab("expenses")}>Expense Log</button>
+            <button className={activeTab === "forecast" ? "active" : ""} onClick={() => setActiveTab("forecast")}>Forecast</button>
+            <button className={activeTab === "settings" ? "active" : ""} onClick={() => setActiveTab("settings")}>Settings</button>
+          </div>
+          <div className="toolbarRight">{renderTopActionSwitcher()}</div>
         </div>
-        <div className="toolbarRight">{renderTopActionSwitcher()}</div>
       </div>
 
-      <div className="mobileOnly mobileTopBar">
-        {renderTopActionSwitcher()}
+      <div className={`mobileOnly topStickyMobile ${topDocked ? "isDocked" : ""}`}>
+        <div className="mobileTopBar">
+          {renderTopActionSwitcher()}
+        </div>
       </div>
 
-      <div className={`sectionWrap ${busyTab === activeTab ? "isBusy" : ""}`}>
+      <div className={`sectionWrap ${busyTab === activeTab ? "isBusy" : ""} ${topDocked ? "withTopDockOffset" : ""}`}>
         {busyTab === activeTab && (
           <div className="busyOverlay">
             <div className="spinner" />
