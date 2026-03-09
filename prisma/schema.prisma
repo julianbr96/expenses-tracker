@@ -13,10 +13,20 @@ enum Currency {
   ARS
 }
 
+enum ExpenseSourceType {
+  CREDIT_CARD
+  DEBIT_CARD
+  BANK_ACCOUNT
+  PREPAID
+  CASH
+  OTHER
+}
+
 model Card {
   id           String              @id @default(cuid())
   name         String
   currency     Currency            @default(USD)
+  sourceType   ExpenseSourceType   @default(CREDIT_CARD)
   isActive     Boolean             @default(true)
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt

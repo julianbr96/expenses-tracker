@@ -1,17 +1,19 @@
 import { prisma } from "@/lib/db";
-import { currencySchema } from "@/lib/api";
+import { currencySchema, sourceTypeSchema } from "@/lib/api";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
 const createSchema = z.object({
   name: z.string().min(1),
-  currency: currencySchema
+  currency: currencySchema,
+  sourceType: sourceTypeSchema.default("CREDIT_CARD")
 });
 
 const updateSchema = z.object({
   id: z.string().min(1),
   name: z.string().min(1).optional(),
   currency: currencySchema.optional(),
+  sourceType: sourceTypeSchema.optional(),
   isActive: z.boolean().optional()
 });
 

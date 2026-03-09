@@ -3,7 +3,27 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type Currency = "USD" | "ARS";
+type SourceType = "CREDIT_CARD" | "DEBIT_CARD" | "BANK_ACCOUNT" | "PREPAID" | "CASH" | "OTHER";
 type Tab = "dashboard" | "tracker" | "expenses" | "forecast" | "settings";
+const SOURCE_TYPE_OPTIONS: Array<{ value: SourceType; label: string; icon: string }> = [
+  { value: "CREDIT_CARD", label: "Credit Card", icon: "[CC]" },
+  { value: "DEBIT_CARD", label: "Debit Card", icon: "[DB]" },
+  { value: "BANK_ACCOUNT", label: "Bank Account", icon: "[BA]" },
+  { value: "PREPAID", label: "Prepaid", icon: "[PP]" },
+  { value: "CASH", label: "Cash", icon: "[CA]" },
+  { value: "OTHER", label: "Other", icon: "[OT]" }
+];
+
+function sourceTypeLabel(value: SourceType | string | null | undefined): string {
+  if (!value) return "Credit Card";
+  return SOURCE_TYPE_OPTIONS.find((option) => option.value === value)?.label ?? "Other";
+}
+
+function sourceTypeIcon(value: SourceType | string | null | undefined): string {
+  if (!value) return "[CC]";
+  return SOURCE_TYPE_OPTIONS.find((option) => option.value === value)?.icon ?? "[OT]";
+}
+
 const MOBILE_TABS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: "dashboard", label: "Home", icon: "◉" },
   { id: "tracker", label: "Cards", icon: "◈" },
@@ -16,6 +36,7 @@ interface Card {
   id: string;
   name: string;
   currency: Currency;
+  sourceType: SourceType;
   isActive: boolean;
 }
 
@@ -255,7 +276,7 @@ export function FinanceApp() {
     description: ""
   });
 
-  const [cardForm, setCardForm] = useState({ name: "", currency: "USD" as Currency });
+  const [cardForm, setCardForm] = useState({ name: "", currency: "USD" as Currency, sourceType: "CREDIT_CARD" as SourceType });
   const [incomeForm, setIncomeForm] = useState({
     name: "",
     amount: "",
@@ -700,7 +721,7 @@ export function FinanceApp() {
     event.preventDefault();
     await runTabAction("settings", async () => {
       await api("/api/cards", { method: "POST", body: JSON.stringify(cardForm) });
-      setCardForm({ name: "", currency: "USD" });
+      setCardForm({ name: "", currency: "USD", sourceType: "CREDIT_CARD" });
     });
   }
 
@@ -1021,7 +1042,7 @@ export function FinanceApp() {
             <table className="desktopOnly desktopTable forecastTable">
               <thead>
                 <tr>
-                  <th>Card</th>
+                  <th>Source</th>
                   <th>Remaining</th>
                   <th>Expected Payment Month</th>
                   <th>Current Spending</th>
@@ -1032,7 +1053,9 @@ export function FinanceApp() {
                 {data.projection.cardTracker.map((row) => (
                   <tr key={row.cardId} className={`trackerRow tracker-${trackerStatus(row)}`}>
                     <td>
-                      <span className="trackerName">{row.cardName}</span>
+                      <span className="trackerName">
+                        {sourceTypeIcon(data.cards.find((card) => card.id === row.cardId)?.sourceType ?? "CREDIT_CARD")} {row.cardName}
+                      </span>
                       <span className={`trackerBadge tracker-${trackerStatus(row)}`}>
                         {trackerStatus(row) === "over" ? "Over limit" : trackerStatus(row) === "warning" ? "Near limit" : trackerStatus(row) === "ok" ? "Healthy" : "No target"}
                       </span>
@@ -1050,7 +1073,7 @@ export function FinanceApp() {
             <div className="mobileOnly">
               {data.projection.cardTracker.map((row) => (
                 <article key={row.cardId} className={`mobileCard tracker-${trackerStatus(row)}`}>
-                  <h3>{row.cardName}</h3>
+                  <h3>{sourceTypeIcon(data.cards.find((card) => card.id === row.cardId)?.sourceType ?? "CREDIT_CARD")} {row.cardName}</h3>
                   <p className={`trackerBadge tracker-${trackerStatus(row)}`}>
                     {trackerStatus(row) === "over" ? "Over limit" : trackerStatus(row) === "warning" ? "Near limit" : trackerStatus(row) === "ok" ? "Healthy margin" : "No target"}
                   </p>
@@ -1086,7 +1109,7 @@ export function FinanceApp() {
                 />
                 <select value={expenseForm.cardId} onChange={(event) => setExpenseForm((prev) => ({ ...prev, cardId: event.target.value }))} required>
                   {data.cards.map((card) => (
-                    <option key={card.id} value={card.id}>{card.name}</option>
+                    <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>
                   ))}
                 </select>
                 <input type="number" step="0.01" placeholder="Amount" value={expenseForm.amount} onChange={(event) => setExpenseForm((prev) => ({ ...prev, amount: event.target.value }))} required />
@@ -1105,7 +1128,7 @@ export function FinanceApp() {
                 <select value={expenseFilterCard} onChange={(event) => setExpenseFilterCard(event.target.value)}>
                   <option value="all">All cards</option>
                   {data.cards.map((card) => (
-                    <option key={card.id} value={card.id}>{card.name}</option>
+                    <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>
                   ))}
                 </select>
                 <select value={expenseFilterMonth} onChange={(event) => setExpenseFilterMonth(event.target.value)}>
@@ -1264,21 +1287,26 @@ export function FinanceApp() {
         {activeTab === "settings" && (
           <section className="stack">
             <article className="panel settingsCards">
-              <h2>Cards</h2>
+              <h2>Expense Sources</h2>
               <form className="formGrid" onSubmit={submitCard}>
-                <input placeholder="Card name" value={cardForm.name} onChange={(event) => setCardForm((prev) => ({ ...prev, name: event.target.value }))} required />
+                <input placeholder="Source name" value={cardForm.name} onChange={(event) => setCardForm((prev) => ({ ...prev, name: event.target.value }))} required />
                 <select value={cardForm.currency} onChange={(event) => setCardForm((prev) => ({ ...prev, currency: event.target.value as Currency }))}>
                   <option value="USD">USD</option>
                   <option value="ARS">ARS</option>
                 </select>
-                <button type="submit">Add Card</button>
+                <select value={cardForm.sourceType} onChange={(event) => setCardForm((prev) => ({ ...prev, sourceType: event.target.value as SourceType }))}>
+                  {SOURCE_TYPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.icon} {option.label}</option>
+                  ))}
+                </select>
+                <button type="submit">Add Source</button>
               </form>
               <ul className="accordionList">
                 {data.cards.map((card) => (
                   <details key={card.id} className="itemAccordion">
                     <summary>
-                      <span>{card.name}</span>
-                      <span className="subtle">{card.currency} - {card.isActive ? "active" : "inactive"}</span>
+                      <span>{sourceTypeIcon(card.sourceType)} {card.name}</span>
+                      <span className="subtle">{sourceTypeLabel(card.sourceType)} · {card.currency} · {card.isActive ? "active" : "inactive"}</span>
                     </summary>
                     <ul>
                       <EditableCardRow
@@ -1370,7 +1398,7 @@ export function FinanceApp() {
               <form className="formGrid" onSubmit={submitExpectation}>
                 <select value={expectationForm.cardId} onChange={(event) => setExpectationForm((prev) => ({ ...prev, cardId: event.target.value }))} required>
                   {data.cards.map((card) => (
-                    <option key={card.id} value={card.id}>{card.name}</option>
+                    <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>
                   ))}
                 </select>
                 <label className="fieldLabel"><span>Payment month</span><input type="month" value={expectationForm.month} onChange={(event) => setExpectationForm((prev) => ({ ...prev, month: event.target.value }))} required /></label>
@@ -1389,7 +1417,7 @@ export function FinanceApp() {
                   {expectationGroups.map((group) => (
                     <details key={group.card.id} className="expectationAccordion">
                       <summary>
-                        <span>{group.card.name}</span>
+                        <span>{sourceTypeIcon(group.card.sourceType)} {group.card.name}</span>
                         <span className="subtle">{group.rows.length} month{group.rows.length === 1 ? "" : "s"}</span>
                       </summary>
                       <ul className="accordionList">
@@ -1517,7 +1545,7 @@ function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSa
     return (
       <tr>
         <td><input type="date" value={draft.date} onChange={(event) => setDraft((prev) => ({ ...prev, date: event.target.value }))} /></td>
-        <td><select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>{cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}</select></td>
+        <td><select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>{cards.map((card) => <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>)}</select></td>
         <td><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /></td>
         <td><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></td>
         <td><input value={draft.description ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))} /></td>
@@ -1529,7 +1557,7 @@ function ExpenseRow({ expense, cards, isEditing, onStartEdit, onCancelEdit, onSa
   return (
     <tr>
       <td>{expense.date}</td>
-      <td>{expense.card.name}</td>
+      <td>{sourceTypeIcon(expense.card.sourceType)} {expense.card.name}</td>
       <td>{expense.amount.toFixed(2)}</td>
       <td>{expense.currency}</td>
       <td>{expense.description || "-"}</td>
@@ -1564,7 +1592,7 @@ function MobileExpenseCard({
           <input type="date" value={draft.date} onChange={(event) => setDraft((prev) => ({ ...prev, date: event.target.value }))} />
           <select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>
             {cards.map((card) => (
-              <option key={card.id} value={card.id}>{card.name}</option>
+              <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>
             ))}
           </select>
           <input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} />
@@ -1582,7 +1610,7 @@ function MobileExpenseCard({
 
   return (
     <article className="mobileCard">
-      <h3>{expense.card.name}</h3>
+      <h3>{sourceTypeIcon(expense.card.sourceType)} {expense.card.name}</h3>
       <p className="mobileMain">{expense.amount.toFixed(2)} {expense.currency}</p>
       <p className="subtle">{expense.date}</p>
       <details>
@@ -1607,7 +1635,38 @@ function EditableCardRow({ card, isEditing, onEdit, onCancel, onSave, onToggle }
 }) {
   const [draft, setDraft] = useState(card);
   useEffect(() => setDraft(card), [card]);
-  return <li className="listRow">{isEditing ? <><div className="inlineForm"><input value={draft.name} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} /><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></div><div className="rowButtons"><button onClick={() => void onSave({ id: card.id, name: draft.name, currency: draft.currency })}>Save</button><button className="secondary" onClick={onCancel}>Cancel</button></div></> : <><span>{card.name} ({card.currency})</span><div className="rowButtons"><button onClick={onEdit}>Edit</button><button className="secondary" onClick={onToggle}>{card.isActive ? "Deactivate" : "Activate"}</button></div></>}</li>;
+  return (
+    <li className="listRow">
+      {isEditing ? (
+        <>
+          <div className="inlineForm">
+            <input value={draft.name} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} />
+            <select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}>
+              <option value="USD">USD</option>
+              <option value="ARS">ARS</option>
+            </select>
+            <select value={draft.sourceType} onChange={(event) => setDraft((prev) => ({ ...prev, sourceType: event.target.value as SourceType }))}>
+              {SOURCE_TYPE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.icon} {option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="rowButtons">
+            <button onClick={() => void onSave({ id: card.id, name: draft.name, currency: draft.currency, sourceType: draft.sourceType })}>Save</button>
+            <button className="secondary" onClick={onCancel}>Cancel</button>
+          </div>
+        </>
+      ) : (
+        <>
+          <span>{sourceTypeIcon(card.sourceType)} {card.name} ({sourceTypeLabel(card.sourceType)} · {card.currency})</span>
+          <div className="rowButtons">
+            <button onClick={onEdit}>Edit</button>
+            <button className="secondary" onClick={onToggle}>{card.isActive ? "Deactivate" : "Activate"}</button>
+          </div>
+        </>
+      )}
+    </li>
+  );
 }
 
 function EditableIncomeRow({ income, isEditing, onEdit, onCancel, onSave, onToggle }: {
@@ -1647,7 +1706,7 @@ function EditableExpectationRow({ row, cards, isEditing, onEdit, onCancel, onSav
 }) {
   const [draft, setDraft] = useState(row);
   useEffect(() => setDraft(row), [row]);
-  return <li className="listRow">{isEditing ? <><div className="inlineForm"><select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>{cards.map((card) => <option key={card.id} value={card.id}>{card.name}</option>)}</select><label className="fieldLabel"><span>Payment month</span><input type="month" value={draft.month} onChange={(event) => setDraft((prev) => ({ ...prev, month: event.target.value }))} /></label><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></div><div className="rowButtons"><button onClick={() => void onSave({ ...draft, id: row.id })}>Save</button><button className="secondary" onClick={onCancel}>Cancel</button></div></> : <><span>{row.card.name} - {row.month}: {row.amount} {row.currency}</span><div className="rowButtons"><button onClick={onEdit}>Edit</button><button className="secondary" onClick={onDelete}>Delete</button></div></>}</li>;
+  return <li className="listRow">{isEditing ? <><div className="inlineForm"><select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>{cards.map((card) => <option key={card.id} value={card.id}>{sourceTypeIcon(card.sourceType)} {card.name}</option>)}</select><label className="fieldLabel"><span>Payment month</span><input type="month" value={draft.month} onChange={(event) => setDraft((prev) => ({ ...prev, month: event.target.value }))} /></label><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></div><div className="rowButtons"><button onClick={() => void onSave({ ...draft, id: row.id })}>Save</button><button className="secondary" onClick={onCancel}>Cancel</button></div></> : <><span>{sourceTypeIcon(row.card.sourceType)} {row.card.name} - {row.month}: {row.amount} {row.currency}</span><div className="rowButtons"><button onClick={onEdit}>Edit</button><button className="secondary" onClick={onDelete}>Delete</button></div></>}</li>;
 }
 
 function EditableAdvancementRow({ row, isEditing, onEdit, onCancel, onSave, onToggle, onDelete }: {

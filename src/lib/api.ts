@@ -1,7 +1,8 @@
-import { Currency } from "@prisma/client";
+import { Currency, ExpenseSourceType } from "@prisma/client";
 import { z } from "zod";
 
 export const currencySchema = z.nativeEnum(Currency);
+export const sourceTypeSchema = z.nativeEnum(ExpenseSourceType);
 export const monthSchema = z.string().regex(/^\d{4}-\d{2}$/);
 
 export const amountSchema = z.coerce.number().finite().positive();
