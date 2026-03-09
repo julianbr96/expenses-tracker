@@ -993,6 +993,16 @@ th {
     min-width: 92px;
   }
 
+  .currencyToggle.expenseMode .currencyBtn {
+    min-width: 54px;
+    padding: 7px 8px;
+    font-size: 0.8rem;
+  }
+
+  .currencyToggle.expenseMode .amountViewLabel {
+    display: none;
+  }
+
   .syncStatus {
     max-width: none;
     font-size: 0.78rem;

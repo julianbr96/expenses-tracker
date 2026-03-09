@@ -13,6 +13,26 @@ import {
 type Currency = "USD" | "ARS";
 type Tab = "dashboard" | "tracker" | "expenses" | "forecast" | "settings";
 type ExpenseDisplayMode = "STORED" | Currency;
+type ExpenseTimeFilter =
+  | "TODAY"
+  | "CURRENT_WEEK"
+  | "CURRENT_MONTH"
+  | "LAST_MONTH"
+  | "LAST_3_MONTHS"
+  | "LAST_7_DAYS"
+  | "CUSTOM_MONTH"
+  | "ALL_TIME";
+
+const EXPENSE_TIME_FILTERS: Array<{ value: ExpenseTimeFilter; label: string }> = [
+  { value: "CURRENT_WEEK", label: "Current week" },
+  { value: "TODAY", label: "Today" },
+  { value: "CURRENT_MONTH", label: "Current month" },
+  { value: "LAST_MONTH", label: "Last month" },
+  { value: "LAST_3_MONTHS", label: "Last 3 months" },
+  { value: "LAST_7_DAYS", label: "Last 7 days" },
+  { value: "CUSTOM_MONTH", label: "Specific month" },
+  { value: "ALL_TIME", label: "All time" }
+];
 
 function sourceTypeOptionLabel(value: SourceType | string | null | undefined, name: string): string {
   const SELECT_STYLE: "emoji" | "text" = "emoji";
@@ -240,6 +260,54 @@ function triggerHaptic() {
   }
 }
 
+function toLocalDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function expenseDateBounds(filter: ExpenseTimeFilter, customMonth: string): { from: string | null; to: string | null } {
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const todayKey = toLocalDateKey(today);
+
+  if (filter === "ALL_TIME") return { from: null, to: null };
+  if (filter === "TODAY") return { from: todayKey, to: todayKey };
+  if (filter === "CURRENT_MONTH") {
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    return { from: toLocalDateKey(monthStart), to: todayKey };
+  }
+  if (filter === "LAST_MONTH") {
+    const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+    return { from: toLocalDateKey(lastMonthStart), to: toLocalDateKey(lastMonthEnd) };
+  }
+  if (filter === "LAST_3_MONTHS") {
+    const start = new Date(today.getFullYear(), today.getMonth() - 2, 1);
+    return { from: toLocalDateKey(start), to: todayKey };
+  }
+  if (filter === "LAST_7_DAYS") {
+    const start = new Date(today);
+    start.setDate(start.getDate() - 6);
+    return { from: toLocalDateKey(start), to: todayKey };
+  }
+  if (filter === "CUSTOM_MONTH") {
+    const [yearRaw, monthRaw] = customMonth.split("-");
+    const year = Number(yearRaw);
+    const month = Number(monthRaw);
+    if (!year || !month) return { from: null, to: null };
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 0);
+    return { from: toLocalDateKey(start), to: toLocalDateKey(end) };
+  }
+
+  const weekStart = new Date(today);
+  const day = (weekStart.getDay() + 6) % 7;
+  weekStart.setDate(weekStart.getDate() - day);
+  return { from: toLocalDateKey(weekStart), to: todayKey };
+}
+
 export function FinanceApp() {
   const SYNC_COOLDOWN_MS = 25000;
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
@@ -273,7 +341,8 @@ export function FinanceApp() {
   const headerRef = useRef<HTMLElement | null>(null);
 
   const [expenseFilterCard, setExpenseFilterCard] = useState<string>("all");
-  const [expenseFilterMonth, setExpenseFilterMonth] = useState<string>("all");
+  const [expenseTimeFilter, setExpenseTimeFilter] = useState<ExpenseTimeFilter>("CURRENT_WEEK");
+  const [expenseCustomMonth, setExpenseCustomMonth] = useState<string>(new Date().toISOString().slice(0, 7));
   const [expenseDisplayMode, setExpenseDisplayMode] = useState<ExpenseDisplayMode>("STORED");
   const [expenseDateTouched, setExpenseDateTouched] = useState(false);
 
@@ -433,19 +502,16 @@ export function FinanceApp() {
     };
   }, []);
 
-  const expenseMonths = useMemo(() => {
-    if (!data) return [];
-    return Array.from(new Set(data.expenses.map((expense) => expense.date.slice(0, 7))));
-  }, [data]);
-
   const filteredExpenses = useMemo(() => {
     if (!data) return [];
+    const bounds = expenseDateBounds(expenseTimeFilter, expenseCustomMonth);
     return data.expenses.filter((expense) => {
       const byCard = expenseFilterCard === "all" || expense.cardId === expenseFilterCard;
-      const byMonth = expenseFilterMonth === "all" || expense.date.startsWith(expenseFilterMonth);
-      return byCard && byMonth;
+      const byFrom = !bounds.from || expense.date >= bounds.from;
+      const byTo = !bounds.to || expense.date <= bounds.to;
+      return byCard && byFrom && byTo;
     });
-  }, [data, expenseFilterCard, expenseFilterMonth]);
+  }, [data, expenseFilterCard, expenseTimeFilter, expenseCustomMonth]);
 
   const sortedIncomes = useMemo(() => {
     if (!data) return [];
@@ -652,7 +718,7 @@ export function FinanceApp() {
     const isMenuMode = forceMenu || topActionMode === "menu";
     const isExpensesTab = activeTab === "expenses";
     return (
-      <div className="currencyToggle actionSwitcher">
+      <div className={`currencyToggle actionSwitcher ${isExpensesTab ? "expenseMode" : ""}`}>
         {isMenuMode ? (
           <>
             <span className="syncStatus">Synced {formatLastSync(lastSyncedAt)}</span>
@@ -665,7 +731,7 @@ export function FinanceApp() {
           </>
         ) : isExpensesTab ? (
           <>
-            <span>Amount</span>
+            <span className="amountViewLabel">View</span>
             <button className={`currencyBtn ${expenseDisplayMode === "STORED" ? "active" : ""}`} onClick={() => setExpenseDisplayMode("STORED")}>Stored</button>
             <button className={`currencyBtn ${expenseDisplayMode === "USD" ? "active" : ""}`} onClick={() => setExpenseDisplayMode("USD")}>USD</button>
             <button className={`currencyBtn ${expenseDisplayMode === "ARS" ? "active" : ""}`} onClick={() => setExpenseDisplayMode("ARS")}>ARS</button>
@@ -709,20 +775,33 @@ export function FinanceApp() {
           amount: Number(expenseForm.amount)
         })
       });
-      setExpenseForm((prev) => ({ ...prev, amount: "", description: "" }));
+      setExpenseForm({
+        date: new Date().toISOString().slice(0, 10),
+        cardId: data?.cards[0]?.id ?? expenseForm.cardId,
+        amount: "",
+        currency: "USD",
+        description: ""
+      });
       setExpenseDateTouched(false);
     });
   }
 
-  async function updateExpense(expense: Expense, originalDate: string) {
-    const useNow = expense.date === originalDate;
+  async function updateExpense(expense: Expense, originalExpense: Expense) {
+    const payload: Partial<Expense> & { id: string; dateTimeIso?: string } = { id: expense.id };
+    if (expense.amount !== originalExpense.amount) payload.amount = expense.amount;
+    if (expense.cardId !== originalExpense.cardId) payload.cardId = expense.cardId;
+    if (expense.currency !== originalExpense.currency) payload.currency = expense.currency;
+    if ((expense.description ?? "") !== (originalExpense.description ?? "")) payload.description = expense.description;
+    if (expense.date !== originalExpense.date) payload.dateTimeIso = expenseDateTimeIso(expense.date, false);
+    if (Object.keys(payload).length === 1) {
+      setEditingExpenseId(null);
+      return;
+    }
+
     await runTabAction("expenses", async () => {
       await api("/api/expenses", {
         method: "PATCH",
-        body: JSON.stringify({
-          ...expense,
-          dateTimeIso: expenseDateTimeIso(expense.date, useNow)
-        })
+        body: JSON.stringify(payload)
       });
       setEditingExpenseId(null);
     });
@@ -1082,7 +1161,11 @@ export function FinanceApp() {
                       </span>
                     </td>
                     <td className={`trackerRemaining tracker-${trackerStatus(row)}`}>
-                      {displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}
+                      {row.expectedCycleUsd <= 0 ? (
+                        <span className="subtle">No tracking target</span>
+                      ) : (
+                        displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)
+                      )}
                     </td>
                     <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.expectedCycleUsd) : ARS_FORMAT.format(row.expectedCycleArs)}</td>
                     <td>{displayCurrency === "USD" ? USD_FORMAT.format(row.currentCycleUsd) : ARS_FORMAT.format(row.currentCycleArs)}</td>
@@ -1098,10 +1181,16 @@ export function FinanceApp() {
                   <p className={`trackerBadge tracker-${trackerStatus(row)}`}>
                     {trackerStatus(row) === "over" ? "Over limit" : trackerStatus(row) === "warning" ? "Near limit" : trackerStatus(row) === "ok" ? "Healthy margin" : "No target"}
                   </p>
-                  <p className={`mobileMain trackerRemaining tracker-${trackerStatus(row)}`}>
-                    {displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}
-                  </p>
-                  <p className="subtle">Remaining to spend</p>
+                  {row.expectedCycleUsd <= 0 ? (
+                    <p className="mobileMain tracker-none">No tracking target</p>
+                  ) : (
+                    <>
+                      <p className={`mobileMain trackerRemaining tracker-${trackerStatus(row)}`}>
+                        {displayCurrency === "USD" ? USD_FORMAT.format(row.remainingExpectedUsd) : ARS_FORMAT.format(row.remainingExpectedArs)}
+                      </p>
+                      <p className="subtle">Remaining to spend</p>
+                    </>
+                  )}
                   <details>
                     <summary>Details</summary>
                     <p>Expected: {displayCurrency === "USD" ? USD_FORMAT.format(row.expectedCycleUsd) : ARS_FORMAT.format(row.expectedCycleArs)}</p>
@@ -1159,12 +1248,14 @@ export function FinanceApp() {
                     <SourceBadge sourceType={findCardById(data.cards, expenseFilterCard)?.sourceType} />
                   </p>
                 ) : null}
-                <select value={expenseFilterMonth} onChange={(event) => setExpenseFilterMonth(event.target.value)}>
-                  <option value="all">All months</option>
-                  {expenseMonths.map((month) => (
-                    <option key={month} value={month}>{toMonthLabel(month)}</option>
+                <select value={expenseTimeFilter} onChange={(event) => setExpenseTimeFilter(event.target.value as ExpenseTimeFilter)}>
+                  {EXPENSE_TIME_FILTERS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
+                {expenseTimeFilter === "CUSTOM_MONTH" ? (
+                  <input type="month" value={expenseCustomMonth} onChange={(event) => setExpenseCustomMonth(event.target.value)} />
+                ) : null}
               </div>
               <table className="desktopOnly desktopTable">
                 <thead>
@@ -1566,7 +1657,7 @@ function ExpenseRow({ expense, cards, expenseDisplayMode, arsPerUsd, isEditing, 
   isEditing: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
-  onSave: (expense: Expense, originalDate: string) => Promise<void>;
+  onSave: (expense: Expense, originalExpense: Expense) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useState(expense);
@@ -1593,7 +1684,7 @@ function ExpenseRow({ expense, cards, expenseDisplayMode, arsPerUsd, isEditing, 
         <td><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /></td>
         <td><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></td>
         <td><input value={draft.description ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))} /></td>
-        <td className="rowButtons"><button onClick={() => void onSave(draft, expense.date)}>Save</button><button className="secondary" onClick={onCancelEdit}>Cancel</button></td>
+        <td className="rowButtons"><button onClick={() => void onSave(draft, expense)}>Save</button><button className="secondary" onClick={onCancelEdit}>Cancel</button></td>
       </tr>
     );
   }
@@ -1627,7 +1718,7 @@ function MobileExpenseCard({
   cards: Card[];
   expenseDisplayMode: ExpenseDisplayMode;
   arsPerUsd: number;
-  onSave: (expense: Expense, originalDate: string) => Promise<void>;
+  onSave: (expense: Expense, originalExpense: Expense) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
@@ -1664,7 +1755,7 @@ function MobileExpenseCard({
             <option value="ARS">ARS</option>
           </select>
           <input value={draft.description ?? ""} placeholder="Description" onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))} />
-          <button onClick={() => void onSave(draft, expense.date).then(() => setIsEditing(false))}>Save</button>
+          <button onClick={() => void onSave(draft, expense).then(() => setIsEditing(false))}>Save</button>
           <button className="secondary" onClick={() => setIsEditing(false)}>Cancel</button>
         </div>
       </article>
@@ -1676,6 +1767,7 @@ function MobileExpenseCard({
       <h3><SourceBadge sourceType={expense.card.sourceType} /> {expense.card.name}</h3>
       <p className="mobileMain">{mainLabel}</p>
       {showOriginal ? <p className="subtle">Real: {originalLabel}</p> : null}
+      <p className="subtle">Currency: {expense.currency}</p>
       <p className="subtle">{expense.date}</p>
       <details>
         <summary>Details</summary>
