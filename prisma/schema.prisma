@@ -27,11 +27,15 @@ model Card {
   name         String
   currency     Currency            @default(USD)
   sourceType   ExpenseSourceType   @default(CREDIT_CARD)
+  userId       String?
   isActive     Boolean             @default(true)
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
+  user         User?               @relation(fields: [userId], references: [id], onDelete: SetNull)
   expenses     Expense[]
   expectations SpendingExpectation[]
+
+  @@index([userId, createdAt])
 }
 
 model Expense {
@@ -56,11 +60,14 @@ model IncomeSource {
   currency   Currency
   startMonth String
   endMonth   String?
+  userId     String?
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([startMonth])
+  @@index([userId, startMonth])
 }
 
 model FixedExpense {
@@ -70,11 +77,14 @@ model FixedExpense {
   currency   Currency
   startMonth String
   endMonth   String?
+  userId     String?
   isActive   Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([startMonth])
+  @@index([userId, startMonth])
 }
 
 model SpendingExpectation {
@@ -83,14 +93,17 @@ model SpendingExpectation {
   amount    Decimal  @db.Decimal(14, 2)
   currency  Currency
   seriesKey String?
+  userId    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   cardId    String
   card      Card     @relation(fields: [cardId], references: [id], onDelete: Restrict)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@unique([cardId, month])
   @@index([cardId, seriesKey, month])
   @@index([month])
+  @@index([userId, month])
 }
 
 model ExchangeRate {
@@ -103,14 +116,18 @@ model ExchangeRate {
 
 model MonthlyAdjustment {
   id        String   @id @default(cuid())
-  month     String   @unique
+  month     String
   amount    Decimal  @db.Decimal(14, 2)
   currency  Currency @default(USD)
   note      String?
+  userId    String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([month])
+  @@index([userId, month])
+  @@unique([userId, month])
 }
 
 model Advancement {
@@ -119,11 +136,41 @@ model Advancement {
   amount    Decimal  @db.Decimal(14, 2)
   currency  Currency @default(USD)
   note      String?
+  userId    String?
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([month])
+  @@index([userId, month])
+}
+
+model User {
+  id            String             @id @default(cuid())
+  username      String             @unique
+  passwordHash  String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  cards         Card[]
+  incomes       IncomeSource[]
+  fixedExpenses FixedExpense[]
+  expectations  SpendingExpectation[]
+  adjustments   MonthlyAdjustment[]
+  advancements  Advancement[]
+  refreshTokens AuthRefreshToken[]
+}
+
+model AuthRefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
 }
 
 model TelegramSession {

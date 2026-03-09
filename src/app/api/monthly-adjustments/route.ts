@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { currencySchema, monthSchema } from "@/lib/api";
+import { requireUserId } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -16,8 +17,12 @@ const deleteSchema = z.object({
   month: monthSchema
 });
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = requireUserId(request);
+  if ("response" in auth) return auth.response;
+
   const rows = await prisma.monthlyAdjustment.findMany({
+    where: { userId: auth.userId },
     orderBy: { month: "asc" }
   });
 
@@ -25,18 +30,27 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  const auth = requireUserId(request);
+  if ("response" in auth) return auth.response;
+
   const parsed = upsertSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
   const row = await prisma.monthlyAdjustment.upsert({
-    where: { month: parsed.data.month },
+    where: {
+      userId_month: {
+        userId: auth.userId,
+        month: parsed.data.month
+      }
+    },
     create: {
       month: parsed.data.month,
       amount: parsed.data.amount,
       currency: parsed.data.currency,
-      note: parsed.data.note || null
+      note: parsed.data.note || null,
+      userId: auth.userId
     },
     update: {
       amount: parsed.data.amount,
@@ -49,11 +63,14 @@ export async function PUT(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const auth = requireUserId(request);
+  if ("response" in auth) return auth.response;
+
   const parsed = deleteSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  await prisma.monthlyAdjustment.deleteMany({ where: { month: parsed.data.month } });
+  await prisma.monthlyAdjustment.deleteMany({ where: { month: parsed.data.month, userId: auth.userId } });
   return NextResponse.json({ ok: true });
 }

@@ -2,6 +2,7 @@ import { prisma } from "@/lib/db";
 import { appEnv } from "@/lib/env";
 import { addMonths } from "@/lib/time";
 import { amountSchema, currencySchema, monthSchema } from "@/lib/api";
+import { requireUserId } from "@/lib/auth";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -24,8 +25,12 @@ const updateSchema = z.object({
 
 const deleteSchema = z.object({ id: z.string().min(1) });
 
-export async function GET() {
+export async function GET(request: Request) {
+  const auth = requireUserId(request);
+  if ("response" in auth) return auth.response;
+
   const rows = await prisma.spendingExpectation.findMany({
+    where: { userId: auth.userId },
     include: { card: true },
     orderBy: [{ month: "asc" }, { createdAt: "asc" }]
   });
@@ -34,9 +39,20 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const auth = requireUserId(request);
+  if ("response" in auth) return auth.response;
+
   const parsed = createSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
+  }
+
+  const card = await prisma.card.findFirst({
+    where: { id: parsed.data.cardId, userId: auth.userId },
+    select: { id: true }
+  });
+  if (!card) {
+    return NextResponse.json({ error: "Card not found" }, { status: 404 });
   }
 
   const repeatMonths = parsed.data.repeatMonths ?? appEnv.expectationRepeatMonthsDefault;
@@ -58,12 +74,14 @@ export async function POST(request: Request) {
             month,
             amount: parsed.data.amount,
             currency: parsed.data.currency,
-            seriesKey
+            seriesKey,
+            userId: auth.userId
           },
           update: {
             amount: parsed.data.amount,
             currency: parsed.data.currency,
-            seriesKey
+            seriesKey,
+            userId: auth.userId
           }
         })
       )
@@ -75,6 +93,7 @@ export async function POST(request: Request) {
     if (replaceExistingSeries) {
       await tx.spendingExpectation.deleteMany({
         where: {
+          userId: auth.userId,
           cardId: parsed.data.cardId,
           seriesKey,
           month: { notIn: months }
@@ -87,26 +106,50 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const auth = requireUserId(request);
+  if ("response" in auth) return auth.response;
+
   const parsed = updateSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
   const { id, ...changes } = parsed.data;
-  const row = await prisma.spendingExpectation.update({
-    where: { id },
+  if (changes.cardId) {
+    const card = await prisma.card.findFirst({
+      where: { id: changes.cardId, userId: auth.userId },
+      select: { id: true }
+    });
+    if (!card) {
+      return NextResponse.json({ error: "Card not found" }, { status: 404 });
+    }
+  }
+
+  const update = await prisma.spendingExpectation.updateMany({
+    where: { id, userId: auth.userId },
     data: changes
   });
+  if (update.count === 0) {
+    return NextResponse.json({ error: "Expectation not found" }, { status: 404 });
+  }
+
+  const row = await prisma.spendingExpectation.findUnique({ where: { id } });
+  if (!row) {
+    return NextResponse.json({ error: "Expectation not found" }, { status: 404 });
+  }
 
   return NextResponse.json({ ...row, amount: Number(row.amount) });
 }
 
 export async function DELETE(request: Request) {
+  const auth = requireUserId(request);
+  if ("response" in auth) return auth.response;
+
   const parsed = deleteSchema.safeParse(await request.json());
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.flatten() }, { status: 400 });
   }
 
-  await prisma.spendingExpectation.delete({ where: { id: parsed.data.id } });
+  await prisma.spendingExpectation.deleteMany({ where: { id: parsed.data.id, userId: auth.userId } });
   return NextResponse.json({ ok: true });
 }

@@ -1,13 +1,11 @@
+import { clearAuthCookies, readCookie, revokeRefreshToken, REFRESH_COOKIE } from "@/lib/auth";
 import { NextResponse } from "next/server";
 
-export async function POST() {
+export async function POST(request: Request) {
+  const refreshToken = readCookie(request, REFRESH_COOKIE);
+  await revokeRefreshToken(refreshToken);
+
   const response = NextResponse.json({ ok: true });
-  response.cookies.set("finance_auth", "", {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    maxAge: 0,
-    path: "/"
-  });
+  clearAuthCookies(response);
   return response;
 }

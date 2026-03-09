@@ -16,6 +16,12 @@ function readPositiveInt(name: string, fallback: number): number {
   return value;
 }
 
+function readString(name: string, fallback: string): string {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  return raw.trim() || fallback;
+}
+
 function clampInt(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
@@ -42,5 +48,8 @@ export const appEnv = {
   expectationReplaceExistingSeriesDefault: readBoolean(
     "EXPECTATION_REPLACE_EXISTING_SERIES_DEFAULT",
     true
-  )
+  ),
+  authTokenSecret: readString("AUTH_TOKEN_SECRET", process.env.APP_PASSWORD || "dev-insecure-secret"),
+  authAccessTtlSeconds: clampInt(readPositiveInt("AUTH_ACCESS_TTL_SECONDS", 60 * 60 * 24), 60, 60 * 60 * 24 * 30),
+  authRefreshTtlSeconds: clampInt(readPositiveInt("AUTH_REFRESH_TTL_SECONDS", 60 * 60 * 24 * 30), 60, 60 * 60 * 24 * 365)
 };

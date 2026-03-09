@@ -1,16 +1,20 @@
 import { prisma } from "@/lib/db";
 import { decimalToNumber, toDateOnly } from "@/lib/api";
 
-export async function loadModelForProjection() {
+export async function loadModelForProjection(userId?: string) {
+  const userScoped = userId ? { userId } : {};
   const [cards, expenses, incomes, fixedExpenses, expectations, exchangeRates, monthlyAdjustments, advancements] = await Promise.all([
-    prisma.card.findMany({ orderBy: { createdAt: "asc" } }),
-    prisma.expense.findMany({ orderBy: { date: "asc" } }),
-    prisma.incomeSource.findMany({ orderBy: [{ startMonth: "asc" }, { createdAt: "asc" }] }),
-    prisma.fixedExpense.findMany({ orderBy: [{ startMonth: "asc" }, { createdAt: "asc" }] }),
-    prisma.spendingExpectation.findMany({ orderBy: [{ month: "asc" }, { createdAt: "asc" }] }),
+    prisma.card.findMany({ where: userScoped, orderBy: { createdAt: "asc" } }),
+    prisma.expense.findMany({
+      where: userId ? { card: { userId } } : undefined,
+      orderBy: { date: "asc" }
+    }),
+    prisma.incomeSource.findMany({ where: userScoped, orderBy: [{ startMonth: "asc" }, { createdAt: "asc" }] }),
+    prisma.fixedExpense.findMany({ where: userScoped, orderBy: [{ startMonth: "asc" }, { createdAt: "asc" }] }),
+    prisma.spendingExpectation.findMany({ where: userScoped, orderBy: [{ month: "asc" }, { createdAt: "asc" }] }),
     prisma.exchangeRate.findMany({ orderBy: { date: "asc" } }),
-    prisma.monthlyAdjustment.findMany({ orderBy: { month: "asc" } }),
-    prisma.advancement.findMany({ orderBy: [{ month: "asc" }, { createdAt: "asc" }] })
+    prisma.monthlyAdjustment.findMany({ where: userScoped, orderBy: { month: "asc" } }),
+    prisma.advancement.findMany({ where: userScoped, orderBy: [{ month: "asc" }, { createdAt: "asc" }] })
   ]);
 
   return {

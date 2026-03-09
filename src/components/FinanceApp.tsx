@@ -160,6 +160,10 @@ interface ProjectionData {
 }
 
 interface Bootstrap {
+  currentUser: {
+    id: string;
+    username: string;
+  } | null;
   projection: ProjectionData;
   cards: Card[];
   expenses: Expense[];
@@ -223,26 +227,78 @@ function expenseDateTimeIso(date: string, useNow: boolean): string {
   return localMidnight.toISOString();
 }
 
-function api<T>(url: string, options?: RequestInit): Promise<T> {
-  class ApiError extends Error {
-    status: number;
+class ApiError extends Error {
+  status: number;
 
-    constructor(status: number, message: string) {
-      super(message);
-      this.status = status;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function parseApiErrorMessage(response: Response): Promise<string> {
+  const text = await response.text();
+  if (!text) return `Request failed: ${response.status}`;
+
+  try {
+    const payload = JSON.parse(text) as { error?: unknown };
+    if (typeof payload.error === "string" && payload.error.trim()) return payload.error;
+    if (payload.error && typeof payload.error === "object") return "Validation error";
+  } catch {
+    // Non-JSON payloads keep original text fallback below.
+  }
+
+  return text;
+}
+
+async function refreshSessionToken(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+
+  refreshInFlight = fetch("/api/auth/refresh", {
+    method: "POST",
+    credentials: "include"
+  })
+    .then((response) => response.ok)
+    .catch(() => false)
+    .finally(() => {
+      refreshInFlight = null;
+    });
+
+  return refreshInFlight;
+}
+
+async function api<T>(url: string, options?: RequestInit, allowRefresh = true): Promise<T> {
+  const method = options?.method?.toUpperCase() ?? "GET";
+  const hasBody = options?.body !== undefined;
+  const headers = new Headers(options?.headers ?? {});
+  if (hasBody && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const response = await fetch(url, {
+    credentials: "include",
+    ...options,
+    headers
+  });
+
+  if (response.status === 401 && allowRefresh && !url.startsWith("/api/auth/")) {
+    const refreshed = await refreshSessionToken();
+    if (refreshed) {
+      return api<T>(url, options, false);
     }
   }
 
-  return fetch(url, {
-    headers: { "Content-Type": "application/json" },
-    ...options
-  }).then(async (response) => {
-    if (!response.ok) {
-      const text = await response.text();
-      throw new ApiError(response.status, text || `Request failed: ${response.status}`);
-    }
-    return response.json();
-  });
+  if (!response.ok) {
+    throw new ApiError(response.status, await parseApiErrorMessage(response));
+  }
+
+  if (response.status === 204 || method === "DELETE") {
+    return undefined as T;
+  }
+
+  return response.json() as Promise<T>;
 }
 
 function shiftMonth(month: string, delta: number): string {
@@ -258,6 +314,10 @@ function triggerHaptic() {
   if ("vibrate" in navigator) {
     navigator.vibrate(8);
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function toLocalDateKey(date: Date): string {
@@ -317,6 +377,8 @@ export function FinanceApp() {
   const [busyTab, setBusyTab] = useState<Tab | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authUsername, setAuthUsername] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
@@ -423,7 +485,7 @@ export function FinanceApp() {
     } catch (err) {
       if (err instanceof Error && "status" in err && (err as { status: number }).status === 401) {
         setAuthRequired(true);
-        setAuthError("Session expired. Enter password again.");
+        setAuthError("Session expired. Enter credentials again.");
       } else {
         setError(err instanceof Error ? err.message : "Action failed");
       }
@@ -446,6 +508,14 @@ export function FinanceApp() {
         setInitialLoading(false);
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = window.localStorage.getItem("finance_username");
+    if (saved) {
+      setAuthUsername(saved);
+    }
   }, []);
 
   useEffect(() => {
@@ -629,19 +699,40 @@ export function FinanceApp() {
     event.preventDefault();
     setAuthError(null);
     setIsAuthSubmitting(true);
-    setLoaderStatus("Authenticating...");
-    console.info("[auth] submitting password");
+    const trimmedUsername = authUsername.trim();
+    if (!trimmedUsername) {
+      setAuthError("Username is required");
+      setIsAuthSubmitting(false);
+      return;
+    }
+    setLoaderStatus(authMode === "register" ? "Creating account..." : "Authenticating...");
+    console.info(`[auth] submitting ${authMode} for user=${trimmedUsername}`);
     try {
-      await api("/api/auth/verify", {
+      await api(authMode === "register" ? "/api/auth/register" : "/api/auth/verify", {
         method: "POST",
-        body: JSON.stringify({ password: authPassword })
+        body: JSON.stringify({ username: trimmedUsername, password: authPassword })
       });
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("finance_username", trimmedUsername);
+      }
       setAuthPassword("");
+      setError(null);
+      setLoaderStatus("Loading your data...");
       console.info("[auth] success");
-      await fetchBootstrap(true);
+      try {
+        await fetchBootstrap(true);
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 401) {
+          // Safari can commit Set-Cookie slightly after the auth response resolves.
+          await sleep(350);
+          await fetchBootstrap(true);
+        } else {
+          throw err;
+        }
+      }
     } catch (err) {
       console.info("[auth] failed");
-      setAuthError(err instanceof Error ? err.message : "Invalid password");
+      setAuthError(err instanceof Error ? err.message : "Authentication failed");
     } finally {
       setIsAuthSubmitting(false);
     }
@@ -657,6 +748,7 @@ export function FinanceApp() {
     } finally {
       setData(null);
       setAuthRequired(true);
+      setAuthMode("login");
       setAuthPassword("");
       setBusyTab(null);
       setInitialLoading(false);
@@ -696,7 +788,7 @@ export function FinanceApp() {
     } catch (err) {
       if (err instanceof Error && "status" in err && (err as { status: number }).status === 401) {
         setAuthRequired(true);
-        setAuthError("Session expired. Enter password again.");
+        setAuthError("Session expired. Enter credentials again.");
       } else {
         setError(err instanceof Error ? err.message : "Sync failed");
       }
@@ -1025,22 +1117,65 @@ export function FinanceApp() {
     return (
       <main className="container">
         <section className="panel authPanel">
-          <h2>Locked</h2>
-          <p>Enter your app password to continue.</p>
-          <p className="subtle">{loaderStatus}</p>
-          <form className="formGrid" onSubmit={submitAuth}>
-            <input
-              type="password"
-              placeholder="Password"
-              value={authPassword}
-              onChange={(event) => setAuthPassword(event.target.value)}
+          <div className="authHeader">
+            <h2>{authMode === "register" ? "Create Account" : "Welcome Back"}</h2>
+            <p className="subtle">{authMode === "register" ? "Create a new user and password to start." : "Sign in with your username and password."}</p>
+          </div>
+          <div className="authModeSwitch">
+            <button
+              type="button"
+              className={authMode === "login" ? "active" : ""}
               disabled={isAuthSubmitting}
-              required
-            />
+              onClick={() => {
+                setAuthMode("login");
+                setAuthError(null);
+              }}
+            >
+              Login
+            </button>
+            <button
+              type="button"
+              className={authMode === "register" ? "active" : ""}
+              disabled={isAuthSubmitting}
+              onClick={() => {
+                setAuthMode("register");
+                setAuthError(null);
+              }}
+            >
+              Create User
+            </button>
+          </div>
+          <form className="formGrid authForm" onSubmit={submitAuth}>
+            <label className="fieldLabel">
+              <span>Username</span>
+              <input
+                type="text"
+                placeholder="julian"
+                value={authUsername}
+                onChange={(event) => setAuthUsername(event.target.value)}
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                disabled={isAuthSubmitting}
+                required
+              />
+            </label>
+            <label className="fieldLabel">
+              <span>Password</span>
+              <input
+                type="password"
+                placeholder="••••••••"
+                value={authPassword}
+                onChange={(event) => setAuthPassword(event.target.value)}
+                disabled={isAuthSubmitting}
+                required
+              />
+            </label>
             <button type="submit" disabled={isAuthSubmitting}>
-              {isAuthSubmitting ? "Unlocking..." : "Unlock"}
+              {isAuthSubmitting ? (authMode === "register" ? "Creating..." : "Signing in...") : authMode === "register" ? "Create User" : "Sign In"}
             </button>
           </form>
+          {isAuthSubmitting ? <p className="subtle authStatus">{loaderStatus}</p> : null}
           {authError ? <p className="error">{authError}</p> : null}
         </section>
       </main>
@@ -1078,6 +1213,11 @@ export function FinanceApp() {
       <header className="header" ref={headerRef}>
         <h1>Personal Finance Forecasting</h1>
         <p>Track expenses now, project next-month cash impact, and reconcile real closes.</p>
+        {data.currentUser ? (
+          <div className="activeUserBadge" title="Authenticated user">
+            User: {data.currentUser.username}
+          </div>
+        ) : null}
       </header>
 
       <div className={`desktopOnly topSticky ${topDocked ? "isDocked" : ""}`}>

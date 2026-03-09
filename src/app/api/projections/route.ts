@@ -2,11 +2,15 @@ import { generateProjection } from "@/lib/finance";
 import { appEnv } from "@/lib/env";
 import { loadModelForProjection } from "@/lib/load-model";
 import { prisma } from "@/lib/db";
+import { requireUserId } from "@/lib/auth";
 import { addMonths, monthDiff, toMonthKey } from "@/lib/time";
 import { NextResponse } from "next/server";
 
-export async function GET() {
-  const model = await loadModelForProjection();
+export async function GET(request: Request) {
+  const auth = requireUserId(request);
+  if ("response" in auth) return auth.response;
+
+  const model = await loadModelForProjection(auth.userId);
   const currentMonth = toMonthKey(new Date());
   const currentYear = currentMonth.slice(0, 4);
   const currentYearStart = `${currentYear}-01`;
@@ -38,21 +42,34 @@ export async function GET() {
     startFromCurrentMonth: false
   });
 
-  const [cards, expenses, incomes, fixedExpenses, expectations, exchangeRates, monthlyAdjustments, advancements] = await Promise.all([
-    prisma.card.findMany({ orderBy: { createdAt: "asc" } }),
-    prisma.expense.findMany({ include: { card: true }, orderBy: [{ date: "desc" }, { createdAt: "desc" }] }),
-    prisma.incomeSource.findMany({ orderBy: [{ startMonth: "asc" }, { createdAt: "asc" }] }),
-    prisma.fixedExpense.findMany({ orderBy: [{ startMonth: "asc" }, { createdAt: "asc" }] }),
-    prisma.spendingExpectation.findMany({ include: { card: true }, orderBy: [{ month: "asc" }, { createdAt: "asc" }] }),
+  const [currentUser, cards, expenses, incomes, fixedExpenses, expectations, exchangeRates, monthlyAdjustments, advancements] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: auth.userId },
+      select: { id: true, username: true }
+    }),
+    prisma.card.findMany({ where: { userId: auth.userId }, orderBy: { createdAt: "asc" } }),
+    prisma.expense.findMany({
+      where: { card: { userId: auth.userId } },
+      include: { card: true },
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }]
+    }),
+    prisma.incomeSource.findMany({ where: { userId: auth.userId }, orderBy: [{ startMonth: "asc" }, { createdAt: "asc" }] }),
+    prisma.fixedExpense.findMany({ where: { userId: auth.userId }, orderBy: [{ startMonth: "asc" }, { createdAt: "asc" }] }),
+    prisma.spendingExpectation.findMany({
+      where: { userId: auth.userId },
+      include: { card: true },
+      orderBy: [{ month: "asc" }, { createdAt: "asc" }]
+    }),
     prisma.exchangeRate.findMany({
       orderBy: { date: "desc" },
       take: appEnv.exchangeRatesHistoryLimit
     }),
-    prisma.monthlyAdjustment.findMany({ orderBy: { month: "asc" } }),
-    prisma.advancement.findMany({ orderBy: [{ month: "asc" }, { createdAt: "asc" }] })
+    prisma.monthlyAdjustment.findMany({ where: { userId: auth.userId }, orderBy: { month: "asc" } }),
+    prisma.advancement.findMany({ where: { userId: auth.userId }, orderBy: [{ month: "asc" }, { createdAt: "asc" }] })
   ]);
 
   return NextResponse.json({
+    currentUser,
     projection,
     cards,
     expenses: expenses.map((row) => ({
