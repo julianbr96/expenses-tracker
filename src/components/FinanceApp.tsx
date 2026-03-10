@@ -1267,6 +1267,12 @@ export function FinanceApp() {
     );
   }
 
+  const trackerRemainingUsdTotal = data.projection.cardTracker.reduce(
+    (acc, row) => acc + Math.max(row.remainingExpectedUsd, 0),
+    0
+  );
+  const trackerRemainingMetric = dualCurrencyMetric(trackerRemainingUsdTotal);
+
   return (
     <main className="container">
       <header className="header" ref={headerRef}>
@@ -1337,6 +1343,11 @@ export function FinanceApp() {
               Current Spending Cycle ({toMonthLabel(data.projection.currentMonth)}) · Paid on 1st of {toMonthLabel(data.projection.paymentMonth)}
             </h2>
             <p className="subtle">Expected values are tied to payment month. FX reference: {data.projection.currentRateArsPerUsd.toFixed(2)} ARS/USD.</p>
+            <article className="trackerTotalHero">
+              <h3>Total Remaining to Spend</h3>
+              <strong>{trackerRemainingMetric.primary}</strong>
+              <small>{trackerRemainingMetric.secondary}</small>
+            </article>
             <table className="desktopOnly desktopTable forecastTable">
               <thead>
                 <tr>

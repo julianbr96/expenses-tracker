@@ -577,6 +577,40 @@ table {
   color: #4b4b4b;
 }
 
+.trackerTotalHero {
+  margin: 12px 0 14px;
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, rgba(12, 154, 117, 0.2), rgba(16, 101, 83, 0.3));
+  border: 1px solid rgba(12, 154, 117, 0.35);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 10px 20px rgba(24, 60, 49, 0.15);
+}
+
+.trackerTotalHero h3 {
+  margin: 0;
+  font-size: 0.86rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgba(20, 58, 48, 0.88);
+}
+
+.trackerTotalHero strong {
+  display: block;
+  margin-top: 6px;
+  font-size: clamp(1.7rem, 3.2vw, 2.4rem);
+  line-height: 1.05;
+  color: #0d3b32;
+}
+
+.trackerTotalHero small {
+  display: block;
+  margin-top: 5px;
+  font-size: 0.85rem;
+  color: rgba(17, 72, 63, 0.82);
+}
+
 .tracker-ok {
   color: #0c6249;
 }
