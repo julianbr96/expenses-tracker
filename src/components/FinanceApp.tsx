@@ -542,6 +542,17 @@ export function FinanceApp() {
   }, []);
 
   useEffect(() => {
+    if (!authRequired) return;
+    setPasswordFeedback(null);
+  }, [authRequired]);
+
+  useEffect(() => {
+    if (!passwordFeedback) return;
+    const timer = setTimeout(() => setPasswordFeedback(null), 3200);
+    return () => clearTimeout(timer);
+  }, [passwordFeedback]);
+
+  useEffect(() => {
     if (typeof window === "undefined") return;
     if (!("serviceWorker" in navigator)) return;
     void navigator.serviceWorker.register("/sw.js").catch(() => {});
@@ -774,6 +785,7 @@ export function FinanceApp() {
       setAuthRequired(true);
       setAuthMode("login");
       setAuthPassword("");
+      setPasswordFeedback(null);
       setBusyTab(null);
       setInitialLoading(false);
       setLoaderStatus("Logged out");
