@@ -310,6 +310,183 @@ body {
   color: var(--muted);
 }
 
+.dashboardStack {
+  display: grid;
+  gap: 14px;
+}
+
+.dashboardKpiGrid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dashboardPanels3 {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dashboardChartWrap {
+  width: 100%;
+  min-width: 0;
+}
+
+.dashboardChartMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.dashboardChartSvg {
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.4), rgba(251, 246, 236, 0.2));
+  border: 1px solid rgba(255, 255, 255, 0.5);
+}
+
+.dashboardGridLine {
+  stroke: rgba(78, 88, 110, 0.2);
+  stroke-width: 1;
+}
+
+.dashboardCurrentLine {
+  stroke: rgba(17, 72, 63, 0.45);
+  stroke-width: 2;
+  stroke-dasharray: 5 4;
+}
+
+.dashboardHoverLine {
+  stroke: rgba(17, 72, 63, 0.82);
+  stroke-width: 2;
+}
+
+.dashboardTooltip {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.62);
+  border: 1px solid rgba(255, 255, 255, 0.58);
+}
+
+.dashboardTooltipMonth {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.dashboardTooltipRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 0.88rem;
+}
+
+.dashboardTooltipRow span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dashboardTooltipRow i {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.dashboardLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dashboardLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.44);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  font-size: 0.78rem;
+}
+
+.dashboardLegend i {
+  width: 11px;
+  height: 11px;
+  border-radius: 999px;
+  display: inline-block;
+}
+
+.dashboardXAxis {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 10px;
+}
+
+.dashboardXAxis span {
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.dashboardXAxis span.active {
+  color: #124d42;
+  font-weight: 700;
+}
+
+.dashboardDeviationTotal {
+  margin: 8px 0 10px;
+  font-weight: 700;
+}
+
+.dashboardRiskList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+}
+
+.dashboardRiskList li {
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e9dfcb;
+}
+
+.dashboardRiskList li:last-child {
+  border-bottom: 0;
+}
+
+.dashboardRiskList strong {
+  text-align: right;
+}
+
+.dashboardFxInputRow {
+  margin-top: 8px;
+  margin-bottom: 10px;
+}
+
+.dashboardGood {
+  color: #0a5a43;
+  font-weight: 700;
+}
+
+.dashboardBad {
+  color: #8f2a21;
+  font-weight: 700;
+}
+
 .stack {
   display: grid;
   gap: 14px;
@@ -1014,6 +1191,14 @@ th {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .dashboardKpiGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboardPanels3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .toolbar {
     flex-direction: column;
     align-items: stretch;
@@ -1061,6 +1246,11 @@ th {
   }
 
   .grid4 {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboardKpiGrid,
+  .dashboardPanels3 {
     grid-template-columns: 1fr;
   }
 

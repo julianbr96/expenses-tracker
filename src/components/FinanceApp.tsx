@@ -403,6 +403,7 @@ export function FinanceApp() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [passwordForm, setPasswordForm] = useState("");
   const [passwordFeedback, setPasswordFeedback] = useState<string | null>(null);
+  const [fxScenarioRateInput, setFxScenarioRateInput] = useState("");
   const [topActionMode, setTopActionMode] = useState<"currency" | "menu">("currency");
   const [loaderStatus, setLoaderStatus] = useState("Starting...");
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
@@ -551,6 +552,12 @@ export function FinanceApp() {
     const timer = setTimeout(() => setPasswordFeedback(null), 3200);
     return () => clearTimeout(timer);
   }, [passwordFeedback]);
+
+  useEffect(() => {
+    if (!data) return;
+    if (fxScenarioRateInput.trim().length > 0) return;
+    setFxScenarioRateInput(data.projection.currentRateArsPerUsd.toFixed(2));
+  }, [data, fxScenarioRateInput]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1272,6 +1279,131 @@ export function FinanceApp() {
     0
   );
   const trackerRemainingMetric = dualCurrencyMetric(trackerRemainingUsdTotal);
+  const dashboardStartMonth = shiftMonth(data.projection.currentMonth, -6);
+  const dashboardEndMonth = shiftMonth(data.projection.currentMonth, 6);
+  const dashboardRows = data.projection.rows.filter(
+    (row) => row.month >= dashboardStartMonth && row.month <= dashboardEndMonth
+  );
+  const dashboardMonths = dashboardRows.map((row) => row.month);
+  const dashboardCurrentRow = data.projection.rows.find((row) => row.month === data.projection.currentMonth);
+  const nextMonthKey = shiftMonth(data.projection.currentMonth, 1);
+  const nextMonthRow = data.projection.rows.find((row) => row.month === nextMonthKey);
+  const savingsTargetRow = data.projection.rows.find((row) => row.month === shiftMonth(data.projection.currentMonth, 11));
+  const savings12mUsd =
+    (savingsTargetRow?.cumulativeSavingsUsd ?? data.projection.rows[data.projection.rows.length - 1]?.cumulativeSavingsUsd ?? 0) -
+    (dashboardCurrentRow?.cumulativeSavingsUsd ?? 0);
+
+  const currentRate = data.projection.currentRateArsPerUsd;
+  const expenseUsdByMonthCard = new Map<string, Map<string, number>>();
+  for (const expense of data.expenses) {
+    const month = toUtcExpenseDateKey(expense.date).slice(0, 7);
+    const usd = expense.currency === "USD" ? expense.amount : expense.amount / currentRate;
+    if (!expenseUsdByMonthCard.has(month)) {
+      expenseUsdByMonthCard.set(month, new Map<string, number>());
+    }
+    const cardMap = expenseUsdByMonthCard.get(month)!;
+    cardMap.set(expense.cardId, (cardMap.get(expense.cardId) ?? 0) + usd);
+  }
+
+  const expectedUsdByMonthCard = new Map<string, Map<string, number>>();
+  for (const expectation of data.expectations) {
+    const usd = expectation.currency === "USD" ? expectation.amount : expectation.amount / currentRate;
+    if (!expectedUsdByMonthCard.has(expectation.month)) {
+      expectedUsdByMonthCard.set(expectation.month, new Map<string, number>());
+    }
+    const cardMap = expectedUsdByMonthCard.get(expectation.month)!;
+    cardMap.set(expectation.cardId, (cardMap.get(expectation.cardId) ?? 0) + usd);
+  }
+
+  const expectedPaymentForMonthUsd = (month: string) =>
+    [...(expectedUsdByMonthCard.get(month)?.values() ?? [])].reduce((acc, value) => acc + value, 0);
+
+  const actualPaymentForMonthUsd = (month: string) => {
+    const previousMonth = shiftMonth(month, -1);
+    const total = data.cards.reduce((acc, card) => {
+      const sourceMonth = card.sourceType === "CREDIT_CARD" ? previousMonth : month;
+      return acc + (expenseUsdByMonthCard.get(sourceMonth)?.get(card.id) ?? 0);
+    }, 0);
+    return total || expectedPaymentForMonthUsd(month);
+  };
+
+  const recentAccuracyPoints = [1, 2, 3]
+    .map((delta) => shiftMonth(data.projection.currentMonth, -delta))
+    .map((month) => {
+      const expected = expectedPaymentForMonthUsd(month);
+      const actual = actualPaymentForMonthUsd(month);
+      if (expected <= 0 && actual <= 0) return null;
+      if (expected <= 0) return 0;
+      return Math.max(0, 100 - (Math.abs(actual - expected) / expected) * 100);
+    })
+    .filter((value): value is number => typeof value === "number");
+
+  const forecastAccuracyPct =
+    recentAccuracyPoints.length > 0
+      ? recentAccuracyPoints.reduce((acc, value) => acc + value, 0) / recentAccuracyPoints.length
+      : 100;
+
+  const riskDeviationHistory = [1, 2, 3, 4, 5, 6]
+    .map((delta) => shiftMonth(data.projection.currentMonth, -delta))
+    .map((month) => actualPaymentForMonthUsd(month) - expectedPaymentForMonthUsd(month))
+    .filter((value) => Number.isFinite(value));
+
+  const riskMean =
+    riskDeviationHistory.length > 0
+      ? riskDeviationHistory.reduce((acc, value) => acc + value, 0) / riskDeviationHistory.length
+      : 0;
+  const riskStdDev =
+    riskDeviationHistory.length > 0
+      ? Math.sqrt(
+          riskDeviationHistory.reduce((acc, value) => acc + (value - riskMean) ** 2, 0) /
+            riskDeviationHistory.length
+        )
+      : 0;
+  const nextMonthRiskBaseUsd = (nextMonthRow?.netUsd ?? 0) - riskMean;
+  const nextMonthRiskBestUsd = nextMonthRiskBaseUsd + riskStdDev;
+  const nextMonthRiskWorstUsd = nextMonthRiskBaseUsd - riskStdDev;
+
+  const deviationRows = [...data.projection.cardTracker]
+    .map((row) => ({
+      ...row,
+      deviationUsd: row.currentCycleUsd - row.expectedCycleUsd,
+      deviationArs: row.currentCycleArs - row.expectedCycleArs
+    }))
+    .sort((a, b) => Math.abs(b.deviationUsd) - Math.abs(a.deviationUsd));
+  const totalDeviationUsd = deviationRows.reduce((acc, row) => acc + row.deviationUsd, 0);
+
+  const currentAdjustmentUsd = dashboardCurrentRow?.manualAdjustmentUsd ?? 0;
+  const adjustmentHistoryAbs = [1, 2, 3, 4, 5, 6]
+    .map((delta) => data.projection.rows.find((row) => row.month === shiftMonth(data.projection.currentMonth, -delta))?.manualAdjustmentUsd ?? 0)
+    .map((value) => Math.abs(value));
+  const adjustmentAvgAbs6m =
+    adjustmentHistoryAbs.length > 0
+      ? adjustmentHistoryAbs.reduce((acc, value) => acc + value, 0) / adjustmentHistoryAbs.length
+      : 0;
+  const adjustmentDriftPct =
+    adjustmentAvgAbs6m > 0
+      ? ((adjustmentAvgAbs6m - Math.abs(currentAdjustmentUsd)) / adjustmentAvgAbs6m) * 100
+      : 0;
+
+  const parsedFxScenarioRate = Number(fxScenarioRateInput.replace(",", "."));
+  const fxScenarioRate =
+    Number.isFinite(parsedFxScenarioRate) && parsedFxScenarioRate > 0
+      ? parsedFxScenarioRate
+      : currentRate;
+  const fxRateDown = currentRate * 0.9;
+  const fxRateUp = currentRate * 1.1;
+  const currentExpensesUsd = data.projection.dashboard.expectedExpensesUsd;
+  const currentNetUsd = data.projection.dashboard.projectedSavingsUsd;
+  const fxExpensesBaseArs = currentExpensesUsd * currentRate;
+  const fxExpensesScenarioArs = currentExpensesUsd * fxScenarioRate;
+  const fxExpensesDownArs = currentExpensesUsd * fxRateDown;
+  const fxExpensesUpArs = currentExpensesUsd * fxRateUp;
+  const fxNetBaseArs = currentNetUsd * currentRate;
+  const fxNetScenarioArs = currentNetUsd * fxScenarioRate;
+  const fxNetDownArs = currentNetUsd * fxRateDown;
+  const fxNetUpArs = currentNetUsd * fxRateUp;
+  const fxExpensesDeltaArs = fxExpensesScenarioArs - fxExpensesBaseArs;
+  const fxNetDeltaArs = fxNetScenarioArs - fxNetBaseArs;
 
   return (
     <main className="container">
@@ -1313,27 +1445,219 @@ export function FinanceApp() {
         )}
 
         {activeTab === "dashboard" && (
-          <section className="grid4">
-            <article className="metric">
-              <h3>Current Month Income</h3>
-              <strong>{dualCurrencyMetric(data.projection.dashboard.incomeUsd).primary}</strong>
-              <small>{dualCurrencyMetric(data.projection.dashboard.incomeUsd).secondary}</small>
+          <section className="stack dashboardStack">
+            <section className="dashboardKpiGrid">
+              <article className="metric">
+                <h3>Current Month Net</h3>
+                <strong>{dualCurrencyMetric(dashboardCurrentRow?.netUsd ?? 0).primary}</strong>
+                <small>{dualCurrencyMetric(dashboardCurrentRow?.netUsd ?? 0).secondary}</small>
+              </article>
+              <article className="metric">
+                <h3>Projected Month Close</h3>
+                <strong>{dualCurrencyMetric(dashboardCurrentRow?.cumulativeSavingsUsd ?? 0).primary}</strong>
+                <small>{dualCurrencyMetric(dashboardCurrentRow?.cumulativeSavingsUsd ?? 0).secondary}</small>
+              </article>
+              <article className="metric">
+                <h3>Total Remaining to Spend</h3>
+                <strong>{trackerRemainingMetric.primary}</strong>
+                <small>{trackerRemainingMetric.secondary}</small>
+              </article>
+              <article className="metric">
+                <h3>Next Card Payment (1st)</h3>
+                <strong>{dualCurrencyMetric(data.projection.dashboard.nextCardPaymentUsd).primary}</strong>
+                <small>{dualCurrencyMetric(data.projection.dashboard.nextCardPaymentUsd).secondary}</small>
+              </article>
+              <article className="metric">
+                <h3>Projected Savings (12M)</h3>
+                <strong>{dualCurrencyMetric(savings12mUsd).primary}</strong>
+                <small>{dualCurrencyMetric(savings12mUsd).secondary}</small>
+              </article>
+              <article className="metric">
+                <h3>Forecast Accuracy (3M)</h3>
+                <strong>{forecastAccuracyPct.toFixed(1)}%</strong>
+                <small>Expected vs actual payment deviation</small>
+              </article>
+            </section>
+
+            <article className="panel">
+              <h2>Cashflow Trend (Current -6 to +6 months)</h2>
+              <p className="subtle">X axis: month. Y axis: USD. Hover to inspect exact values. Future segments are dashed.</p>
+              <DashboardLineChart
+                chartName="Cashflow Trend"
+                unitLabel="USD"
+                months={dashboardMonths}
+                currentMonth={data.projection.currentMonth}
+                series={[
+                  { label: "Income", color: "#1f6f5f", values: dashboardRows.map((row) => row.incomeUsd) },
+                  { label: "Fixed", color: "#b5833b", values: dashboardRows.map((row) => row.fixedExpensesUsd) },
+                  { label: "Card Payment", color: "#3467b4", values: dashboardRows.map((row) => row.cardPaymentUsd) },
+                  { label: "Net", color: "#8e2419", values: dashboardRows.map((row) => row.netUsd) }
+                ]}
+                valueFormatter={(value) => formatCodeAmount(value, "USD")}
+              />
             </article>
-            <article className="metric">
-              <h3>Current Month Expenses</h3>
-              <strong>{dualCurrencyMetric(data.projection.dashboard.expectedExpensesUsd).primary}</strong>
-              <small>{dualCurrencyMetric(data.projection.dashboard.expectedExpensesUsd).secondary}</small>
+
+            <article className="panel">
+              <h2>Savings Projection (Current -6 to +6 months)</h2>
+              <p className="subtle">X axis: month. Y axis: cumulative USD savings. Hover to inspect exact values.</p>
+              <DashboardLineChart
+                chartName="Savings Projection"
+                unitLabel="USD"
+                months={dashboardMonths}
+                currentMonth={data.projection.currentMonth}
+                series={[
+                  {
+                    label: "Cumulative Savings",
+                    color: "#205e4f",
+                    values: dashboardRows.map((row) => row.cumulativeSavingsUsd)
+                  }
+                ]}
+                valueFormatter={(value) => formatCodeAmount(value, "USD")}
+              />
             </article>
-            <article className="metric">
-              <h3>Projected Net (Current)</h3>
-              <strong>{dualCurrencyMetric(data.projection.dashboard.projectedSavingsUsd).primary}</strong>
-              <small>{dualCurrencyMetric(data.projection.dashboard.projectedSavingsUsd).secondary}</small>
+
+            <article className="panel">
+              <h2>Adjustment Drift (Target: 0)</h2>
+              <p className="subtle">X axis: month. Y axis: USD. Keep the red line as close to zero as possible.</p>
+              <p className={`dashboardDeviationTotal ${adjustmentDriftPct >= 0 ? "dashboardGood" : "dashboardBad"}`}>
+                Current: {formatCodeAmount(currentAdjustmentUsd, "USD")} · 6M avg |adj|: {formatCodeAmount(adjustmentAvgAbs6m, "USD")} · Drift: {adjustmentDriftPct >= 0 ? "+" : ""}{adjustmentDriftPct.toFixed(1)}%
+              </p>
+              <DashboardLineChart
+                chartName="Adjustment Drift"
+                unitLabel="USD"
+                months={dashboardMonths}
+                currentMonth={data.projection.currentMonth}
+                series={[
+                  {
+                    label: "Adjustment",
+                    color: "#8e2419",
+                    values: dashboardRows.map((row) => row.manualAdjustmentUsd)
+                  },
+                  {
+                    label: "Abs Adjustment",
+                    color: "#5f6c83",
+                    values: dashboardRows.map((row) => Math.abs(row.manualAdjustmentUsd))
+                  }
+                ]}
+                valueFormatter={(value) => formatCodeAmount(value, "USD")}
+              />
             </article>
-            <article className="metric">
-              <h3>Next Card Payment (1st)</h3>
-              <strong>{dualCurrencyMetric(data.projection.dashboard.nextCardPaymentUsd).primary}</strong>
-              <small>{dualCurrencyMetric(data.projection.dashboard.nextCardPaymentUsd).secondary}</small>
-            </article>
+
+            <section className="dashboardPanels3">
+              <article className="panel">
+                <h2>Deviation by Source</h2>
+                <p className="subtle">
+                  Current cycle actual vs expected for payment month {toMonthLabel(data.projection.paymentMonth)}.
+                </p>
+                <p className={`dashboardDeviationTotal ${totalDeviationUsd > 0 ? "bad" : totalDeviationUsd < 0 ? "good" : ""}`}>
+                  Total deviation: {dualCurrencyMetric(totalDeviationUsd).primary}
+                </p>
+                <table className="desktopTable">
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th>Expected</th>
+                      <th>Actual</th>
+                      <th>Deviation</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deviationRows.map((row) => (
+                      <tr key={row.cardId}>
+                        <td>{row.cardName}</td>
+                        <td>{dualCurrencyMetric(row.expectedCycleUsd).primary}</td>
+                        <td>{dualCurrencyMetric(row.currentCycleUsd).primary}</td>
+                        <td className={row.deviationUsd > 0 ? "dashboardBad" : row.deviationUsd < 0 ? "dashboardGood" : ""}>
+                          {dualCurrencyMetric(row.deviationUsd).primary}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </article>
+
+              <article className="panel">
+                <h2>Forecast Risk (Next Month)</h2>
+                <p className="subtle">
+                  Base from {toMonthLabel(nextMonthKey)} net, adjusted by last 6 closed-month deviation behavior.
+                </p>
+                <ul className="dashboardRiskList">
+                  <li>
+                    <span>Worst case</span>
+                    <strong>{dualCurrencyMetric(nextMonthRiskWorstUsd).primary}</strong>
+                  </li>
+                  <li>
+                    <span>Base case</span>
+                    <strong>{dualCurrencyMetric(nextMonthRiskBaseUsd).primary}</strong>
+                  </li>
+                  <li>
+                    <span>Best case</span>
+                    <strong>{dualCurrencyMetric(nextMonthRiskBestUsd).primary}</strong>
+                  </li>
+                </ul>
+              </article>
+
+              <article className="panel">
+                <h2>FX Impact (ARS Equivalent)</h2>
+                <p className="subtle">
+                  Set a scenario rate to instantly evaluate impact on current-month expenses and net.
+                </p>
+                <div className="dashboardFxInputRow">
+                  <label className="fieldLabel">
+                    <span>Scenario ARS/USD</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={fxScenarioRateInput}
+                      onChange={(event) => setFxScenarioRateInput(event.target.value)}
+                      placeholder={currentRate.toFixed(2)}
+                    />
+                  </label>
+                </div>
+                <ul className="dashboardRiskList">
+                  <li>
+                    <span>Total Expenses (USD)</span>
+                    <strong>{USD_FORMAT.format(currentExpensesUsd)}</strong>
+                  </li>
+                  <li>
+                    <span>Expenses ARS (Base {currentRate.toFixed(2)})</span>
+                    <strong>{ARS_FORMAT.format(fxExpensesBaseArs)}</strong>
+                  </li>
+                  <li>
+                    <span>Expenses ARS (Scenario {fxScenarioRate.toFixed(2)})</span>
+                    <strong>{ARS_FORMAT.format(fxExpensesScenarioArs)}</strong>
+                  </li>
+                  <li>
+                    <span>Impact on Expenses (Scenario - Base)</span>
+                    <strong className={fxExpensesDeltaArs > 0 ? "dashboardBad" : fxExpensesDeltaArs < 0 ? "dashboardGood" : ""}>
+                      {ARS_FORMAT.format(fxExpensesDeltaArs)}
+                    </strong>
+                  </li>
+                  <li>
+                    <span>Net ARS (Base {currentRate.toFixed(2)})</span>
+                    <strong>{ARS_FORMAT.format(fxNetBaseArs)}</strong>
+                  </li>
+                  <li>
+                    <span>Net ARS (Scenario {fxScenarioRate.toFixed(2)})</span>
+                    <strong>{ARS_FORMAT.format(fxNetScenarioArs)}</strong>
+                  </li>
+                  <li>
+                    <span>Impact on Net (Scenario - Base)</span>
+                    <strong className={fxNetDeltaArs > 0 ? "dashboardGood" : fxNetDeltaArs < 0 ? "dashboardBad" : ""}>
+                      {ARS_FORMAT.format(fxNetDeltaArs)}
+                    </strong>
+                  </li>
+                  <li>
+                    <span>Reference: Expenses ARS (-10% / +10%)</span>
+                    <strong>{ARS_FORMAT.format(fxExpensesDownArs)} / {ARS_FORMAT.format(fxExpensesUpArs)}</strong>
+                  </li>
+                  <li>
+                    <span>Reference: Net ARS (-10% / +10%)</span>
+                    <strong>{ARS_FORMAT.format(fxNetDownArs)} / {ARS_FORMAT.format(fxNetUpArs)}</strong>
+                  </li>
+                </ul>
+              </article>
+            </section>
           </section>
         )}
 
@@ -2003,6 +2327,176 @@ function MobileExpenseCard({
         <button className="secondary" onClick={() => void onDelete(expense.id)}>Delete</button>
       </div>
     </article>
+  );
+}
+
+function DashboardLineChart({
+  chartName,
+  unitLabel,
+  months,
+  currentMonth,
+  series,
+  valueFormatter
+}: {
+  chartName: string;
+  unitLabel: string;
+  months: string[];
+  currentMonth: string;
+  series: Array<{ label: string; color: string; values: number[] }>;
+  valueFormatter?: (value: number) => string;
+}) {
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+
+  if (months.length === 0 || series.length === 0) {
+    return <p className="subtle">No chart data available.</p>;
+  }
+
+  const width = 980;
+  const height = 260;
+  const padLeft = 26;
+  const padRight = 18;
+  const padTop = 14;
+  const padBottom = 34;
+  const chartWidth = width - padLeft - padRight;
+  const chartHeight = height - padTop - padBottom;
+  const allValues = series.flatMap((item) => item.values);
+  const minValue = Math.min(0, ...allValues);
+  const maxValue = Math.max(0, ...allValues);
+  const range = maxValue - minValue || 1;
+  const currentIndex = months.findIndex((month) => month === currentMonth);
+  const activeIndex = hoveredIndex ?? currentIndex;
+  const formatValue = valueFormatter ?? ((value: number) => `${value.toFixed(2)} ${unitLabel}`);
+
+  const xFor = (index: number) =>
+    padLeft + (months.length <= 1 ? chartWidth / 2 : (index / (months.length - 1)) * chartWidth);
+  const yFor = (value: number) => padTop + ((maxValue - value) / range) * chartHeight;
+  const pointsForRange = (values: number[], start: number, end: number) => {
+    if (end < start || start < 0 || end >= values.length) return "";
+    const points: string[] = [];
+    for (let i = start; i <= end; i += 1) {
+      points.push(`${xFor(i)},${yFor(values[i])}`);
+    }
+    return points.join(" ");
+  };
+
+  const xTicks = months
+    .map((month, index) => ({ month, index }))
+    .filter(({ month, index }) => index % 2 === 0 || month === currentMonth || index === months.length - 1);
+
+  function handleMouseMove(event: React.MouseEvent<SVGSVGElement>) {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const svgX = ((event.clientX - rect.left) / rect.width) * width;
+    const normalizedX = Math.max(0, Math.min(chartWidth, svgX - padLeft));
+    const index =
+      months.length <= 1 ? 0 : Math.round((normalizedX / chartWidth) * (months.length - 1));
+    setHoveredIndex(Math.max(0, Math.min(months.length - 1, index)));
+  }
+
+  const activeMonth = activeIndex >= 0 ? months[activeIndex] : null;
+
+  return (
+    <div className="dashboardChartWrap">
+      <div className="dashboardChartMeta">
+        <span>{chartName}</span>
+        <span>Unit: {unitLabel}</span>
+      </div>
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="dashboardChartSvg"
+        aria-label={`${chartName} (${unitLabel})`}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => setHoveredIndex(null)}
+      >
+        {[0, 1, 2, 3, 4].map((tick) => {
+          const y = padTop + (tick / 4) * chartHeight;
+          return <line key={tick} x1={padLeft} x2={width - padRight} y1={y} y2={y} className="dashboardGridLine" />;
+        })}
+        {currentIndex >= 0 ? (
+          <line
+            x1={xFor(currentIndex)}
+            x2={xFor(currentIndex)}
+            y1={padTop}
+            y2={height - padBottom}
+            className="dashboardCurrentLine"
+          />
+        ) : null}
+        {hoveredIndex !== null ? (
+          <line
+            x1={xFor(hoveredIndex)}
+            x2={xFor(hoveredIndex)}
+            y1={padTop}
+            y2={height - padBottom}
+            className="dashboardHoverLine"
+          />
+        ) : null}
+        {series.map((item) => {
+          const values = item.values;
+          const pastEnd = currentIndex >= 0 ? currentIndex : values.length - 1;
+          const pastPoints = pointsForRange(values, 0, Math.max(0, pastEnd));
+          const futurePoints = pointsForRange(values, Math.max(0, pastEnd), values.length - 1);
+          const markerIndex =
+            activeIndex >= 0 && activeIndex < values.length
+              ? activeIndex
+              : currentIndex >= 0 && currentIndex < values.length
+                ? currentIndex
+                : null;
+
+          return (
+            <g key={item.label}>
+              <polyline points={pastPoints} fill="none" stroke={item.color} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+              {values.length > 1 && currentIndex >= 0 && currentIndex < values.length - 1 ? (
+                <polyline
+                  points={futurePoints}
+                  fill="none"
+                  stroke={item.color}
+                  strokeWidth="3"
+                  strokeDasharray="7 6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity="0.82"
+                />
+              ) : null}
+              {markerIndex !== null ? (
+                <circle cx={xFor(markerIndex)} cy={yFor(values[markerIndex])} r="4.5" fill={item.color} />
+              ) : null}
+            </g>
+          );
+        })}
+      </svg>
+      {activeMonth ? (
+        <div className="dashboardTooltip">
+          <div className="dashboardTooltipMonth">{toMonthLabel(activeMonth)}</div>
+          {series.map((item) => {
+            const value = item.values[activeIndex] ?? 0;
+            return (
+              <div key={`${activeMonth}-${item.label}`} className="dashboardTooltipRow">
+                <span>
+                  <i style={{ background: item.color }} />
+                  {item.label}
+                </span>
+                <strong>{formatValue(value)}</strong>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+      <div className="dashboardLegend">
+        {series.map((item) => (
+          <span key={item.label}>
+            <i style={{ background: item.color }} />
+            {item.label}
+          </span>
+        ))}
+      </div>
+      <div className="dashboardXAxis">
+        {xTicks.map(({ month, index }) => (
+          <span key={`${month}-${index}`} className={month === currentMonth ? "active" : ""}>
+            {toMonthLabel(month)}
+          </span>
+        ))}
+      </div>
+    </div>
   );
 }
 
