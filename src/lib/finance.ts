@@ -115,21 +115,14 @@ function normalizeRateDate(dateLike: string): string {
 function buildRateLookup(exchangeRates: ExchangeRateRecord[]) {
   const sorted = [...exchangeRates]
     .map((rate) => ({ date: normalizeRateDate(rate.date), arsPerUsd: rate.arsPerUsd }))
-    .sort((a, b) => (a.date < b.date ? -1 : 1));
+    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const latest = sorted.length > 0 ? sorted[sorted.length - 1].arsPerUsd : appEnv.defaultArsPerUsd;
 
   return {
     sorted,
-    getRate(dateLike: string): number {
-      const date = normalizeRateDate(dateLike);
-      let found: number | null = null;
-      for (const item of sorted) {
-        if (item.date <= date) {
-          found = item.arsPerUsd;
-          continue;
-        }
-        break;
-      }
-      return found ?? appEnv.defaultArsPerUsd;
+    // Product rule: always convert using the newest available rate.
+    getRate(_dateLike: string): number {
+      return latest;
     }
   };
 }
