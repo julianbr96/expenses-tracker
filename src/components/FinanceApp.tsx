@@ -219,6 +219,24 @@ function toLocalDateTimeLabel(value: string | null): string {
   }).format(date);
 }
 
+function toUtcDateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function toUtcExpenseDateKey(value: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10);
+  return toUtcDateKey(date);
+}
+
+function toLocalExpenseDateKey(value: string): string {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(0, 10);
+  return toLocalDateKey(date);
+}
+
 function expenseDateTimeIso(date: string, useNow: boolean): string {
   if (useNow) return new Date().toISOString();
   const [year, month, day] = date.split("-").map((part) => Number(part));
@@ -329,43 +347,43 @@ function toLocalDateKey(date: Date): string {
 
 function expenseDateBounds(filter: ExpenseTimeFilter, customMonth: string): { from: string | null; to: string | null } {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const todayKey = toLocalDateKey(today);
+  const todayUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const todayKey = toUtcDateKey(todayUtc);
 
   if (filter === "ALL_TIME") return { from: null, to: null };
   if (filter === "TODAY") return { from: todayKey, to: todayKey };
   if (filter === "CURRENT_MONTH") {
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
-    return { from: toLocalDateKey(monthStart), to: todayKey };
+    const monthStart = new Date(Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth(), 1));
+    return { from: toUtcDateKey(monthStart), to: todayKey };
   }
   if (filter === "LAST_MONTH") {
-    const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
-    const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
-    return { from: toLocalDateKey(lastMonthStart), to: toLocalDateKey(lastMonthEnd) };
+    const lastMonthStart = new Date(Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth() - 1, 1));
+    const lastMonthEnd = new Date(Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth(), 0));
+    return { from: toUtcDateKey(lastMonthStart), to: toUtcDateKey(lastMonthEnd) };
   }
   if (filter === "LAST_3_MONTHS") {
-    const start = new Date(today.getFullYear(), today.getMonth() - 2, 1);
-    return { from: toLocalDateKey(start), to: todayKey };
+    const start = new Date(Date.UTC(todayUtc.getUTCFullYear(), todayUtc.getUTCMonth() - 2, 1));
+    return { from: toUtcDateKey(start), to: todayKey };
   }
   if (filter === "LAST_7_DAYS") {
-    const start = new Date(today);
-    start.setDate(start.getDate() - 6);
-    return { from: toLocalDateKey(start), to: todayKey };
+    const start = new Date(todayUtc);
+    start.setUTCDate(start.getUTCDate() - 6);
+    return { from: toUtcDateKey(start), to: todayKey };
   }
   if (filter === "CUSTOM_MONTH") {
     const [yearRaw, monthRaw] = customMonth.split("-");
     const year = Number(yearRaw);
     const month = Number(monthRaw);
     if (!year || !month) return { from: null, to: null };
-    const start = new Date(year, month - 1, 1);
-    const end = new Date(year, month, 0);
-    return { from: toLocalDateKey(start), to: toLocalDateKey(end) };
+    const start = new Date(Date.UTC(year, month - 1, 1));
+    const end = new Date(Date.UTC(year, month, 0));
+    return { from: toUtcDateKey(start), to: toUtcDateKey(end) };
   }
 
-  const weekStart = new Date(today);
-  const day = (weekStart.getDay() + 6) % 7;
-  weekStart.setDate(weekStart.getDate() - day);
-  return { from: toLocalDateKey(weekStart), to: todayKey };
+  const weekStart = new Date(todayUtc);
+  const day = (weekStart.getUTCDay() + 6) % 7;
+  weekStart.setUTCDate(weekStart.getUTCDate() - day);
+  return { from: toUtcDateKey(weekStart), to: todayKey };
 }
 
 export function FinanceApp() {
@@ -383,6 +401,8 @@ export function FinanceApp() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [isAuthSubmitting, setIsAuthSubmitting] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [passwordForm, setPasswordForm] = useState("");
+  const [passwordFeedback, setPasswordFeedback] = useState<string | null>(null);
   const [topActionMode, setTopActionMode] = useState<"currency" | "menu">("currency");
   const [loaderStatus, setLoaderStatus] = useState("Starting...");
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
@@ -474,14 +494,16 @@ export function FinanceApp() {
     }
   }
 
-  async function runTabAction(tab: Tab, action: () => Promise<void>) {
+  async function runTabAction(tab: Tab, action: () => Promise<void>): Promise<boolean> {
     setBusyTab(tab);
     setLoaderStatus(`Applying changes in ${tab}...`);
     console.info(`[loader] running action for tab=${tab}`);
+    let success = false;
     try {
       await action();
       await fetchBootstrap(true);
       setError(null);
+      success = true;
     } catch (err) {
       if (err instanceof Error && "status" in err && (err as { status: number }).status === 401) {
         setAuthRequired(true);
@@ -492,6 +514,7 @@ export function FinanceApp() {
     } finally {
       setBusyTab(null);
     }
+    return success;
   }
 
   useEffect(() => {
@@ -577,8 +600,9 @@ export function FinanceApp() {
     const bounds = expenseDateBounds(expenseTimeFilter, expenseCustomMonth);
     return data.expenses.filter((expense) => {
       const byCard = expenseFilterCard === "all" || expense.cardId === expenseFilterCard;
-      const byFrom = !bounds.from || expense.date >= bounds.from;
-      const byTo = !bounds.to || expense.date <= bounds.to;
+      const expenseDateKey = toUtcExpenseDateKey(expense.date);
+      const byFrom = !bounds.from || expenseDateKey >= bounds.from;
+      const byTo = !bounds.to || expenseDateKey <= bounds.to;
       return byCard && byFrom && byTo;
     });
   }, [data, expenseFilterCard, expenseTimeFilter, expenseCustomMonth]);
@@ -884,7 +908,9 @@ export function FinanceApp() {
     if (expense.cardId !== originalExpense.cardId) payload.cardId = expense.cardId;
     if (expense.currency !== originalExpense.currency) payload.currency = expense.currency;
     if ((expense.description ?? "") !== (originalExpense.description ?? "")) payload.description = expense.description;
-    if (expense.date !== originalExpense.date) payload.dateTimeIso = expenseDateTimeIso(expense.date, false);
+    const expenseDateKey = toLocalExpenseDateKey(expense.date);
+    const originalDateKey = toLocalExpenseDateKey(originalExpense.date);
+    if (expenseDateKey !== originalDateKey) payload.dateTimeIso = expenseDateTimeIso(expenseDateKey, false);
     if (Object.keys(payload).length === 1) {
       setEditingExpenseId(null);
       return;
@@ -1068,6 +1094,27 @@ export function FinanceApp() {
       });
       setRateForm((prev) => ({ ...prev, arsPerUsd: "" }));
     });
+  }
+
+  async function submitPasswordChange(event: React.FormEvent) {
+    event.preventDefault();
+    if (!passwordForm.trim()) {
+      setPasswordFeedback("Password cannot be empty.");
+      return;
+    }
+
+    setPasswordFeedback(null);
+    const ok = await runTabAction("settings", async () => {
+      await api("/api/auth/password", {
+        method: "PATCH",
+        body: JSON.stringify({ password: passwordForm })
+      });
+    });
+
+    if (ok) {
+      setPasswordForm("");
+      setPasswordFeedback("Password updated.");
+    }
   }
 
   async function syncRate() {
@@ -1549,6 +1596,21 @@ export function FinanceApp() {
 
         {activeTab === "settings" && (
           <section className="stack">
+            <article className="panel settingsAccount">
+              <h2>Account Security</h2>
+              <form className="formGrid" onSubmit={submitPasswordChange}>
+                <input
+                  type="password"
+                  placeholder="New password"
+                  value={passwordForm}
+                  onChange={(event) => setPasswordForm(event.target.value)}
+                  required
+                />
+                <button type="submit">Update Password</button>
+              </form>
+              {passwordFeedback ? <p className="subtle">{passwordFeedback}</p> : null}
+            </article>
+
             <article className="panel settingsCards">
               <h2>Expense Sources</h2>
               <form className="formGrid" onSubmit={submitCard}>
@@ -1800,7 +1862,7 @@ function ExpenseRow({ expense, cards, expenseDisplayMode, arsPerUsd, isEditing, 
   onSave: (expense: Expense, originalExpense: Expense) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState(expense);
+  const [draft, setDraft] = useState<Expense>({ ...expense, date: toLocalExpenseDateKey(expense.date) });
   const targetCurrency = expenseDisplayMode === "STORED" ? expense.currency : expenseDisplayMode;
   const convertedAmount =
     targetCurrency === expense.currency
@@ -1813,7 +1875,7 @@ function ExpenseRow({ expense, cards, expenseDisplayMode, arsPerUsd, isEditing, 
   const showOriginal = expenseDisplayMode !== "STORED";
 
   useEffect(() => {
-    setDraft(expense);
+    setDraft({ ...expense, date: toLocalExpenseDateKey(expense.date) });
   }, [expense]);
 
   if (isEditing) {
@@ -1831,7 +1893,7 @@ function ExpenseRow({ expense, cards, expenseDisplayMode, arsPerUsd, isEditing, 
 
   return (
     <tr>
-      <td>{expense.date}</td>
+      <td>{toLocalDateTimeLabel(expense.date)}</td>
       <td><SourceBadge sourceType={expense.card.sourceType} /> {expense.card.name}</td>
       <td>
         <div className="amountCell">
@@ -1862,7 +1924,7 @@ function MobileExpenseCard({
   onDelete: (id: string) => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState(expense);
+  const [draft, setDraft] = useState<Expense>({ ...expense, date: toLocalExpenseDateKey(expense.date) });
   const targetCurrency = expenseDisplayMode === "STORED" ? expense.currency : expenseDisplayMode;
   const convertedAmount =
     targetCurrency === expense.currency
@@ -1875,7 +1937,7 @@ function MobileExpenseCard({
   const showOriginal = expenseDisplayMode !== "STORED";
 
   useEffect(() => {
-    setDraft(expense);
+    setDraft({ ...expense, date: toLocalExpenseDateKey(expense.date) });
   }, [expense]);
 
   if (isEditing) {
@@ -1908,7 +1970,7 @@ function MobileExpenseCard({
       <p className="mobileMain">{mainLabel}</p>
       {showOriginal ? <p className="subtle">Real: {originalLabel}</p> : null}
       <p className="subtle">Currency: {expense.currency}</p>
-      <p className="subtle">{expense.date}</p>
+      <p className="subtle">{toLocalDateTimeLabel(expense.date)}</p>
       <details>
         <summary>Details</summary>
         <p>Description: {expense.description || "-"}</p>

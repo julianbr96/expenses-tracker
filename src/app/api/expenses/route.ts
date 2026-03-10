@@ -39,7 +39,7 @@ export async function GET(request: Request) {
     expenses.map((expense) => ({
       ...expense,
       amount: Number(expense.amount),
-      date: expense.date.toISOString().slice(0, 10)
+      date: expense.date.toISOString()
     }))
   );
 }

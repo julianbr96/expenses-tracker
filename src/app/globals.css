@@ -319,6 +319,10 @@ body {
   order: 1;
 }
 
+.stack > .settingsAccount {
+  order: 7;
+}
+
 .stack > .settingsExpectations {
   order: 2;
 }

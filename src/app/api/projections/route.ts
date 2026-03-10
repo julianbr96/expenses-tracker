@@ -75,7 +75,7 @@ export async function GET(request: Request) {
     expenses: expenses.map((row) => ({
       ...row,
       amount: Number(row.amount),
-      date: row.date.toISOString().slice(0, 10)
+      date: row.date.toISOString()
     })),
     incomes: incomes.map((row) => ({ ...row, amount: Number(row.amount) })),
     fixedExpenses: fixedExpenses.map((row) => ({ ...row, amount: Number(row.amount) })),
