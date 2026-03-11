@@ -2,6 +2,7 @@ import { generateProjection } from "@/lib/finance";
 import { appEnv } from "@/lib/env";
 import { loadModelForProjection } from "@/lib/load-model";
 import { prisma } from "@/lib/db";
+import { ensureDefaultExpenseCategories } from "@/lib/expense-categories-db";
 import { requireUserId } from "@/lib/auth";
 import { addMonths, monthDiff, toMonthKey } from "@/lib/time";
 import { NextResponse } from "next/server";
@@ -9,6 +10,8 @@ import { NextResponse } from "next/server";
 export async function GET(request: Request) {
   const auth = requireUserId(request);
   if ("response" in auth) return auth.response;
+
+  await ensureDefaultExpenseCategories(auth.userId);
 
   const model = await loadModelForProjection(auth.userId);
   const currentMonth = toMonthKey(new Date());
@@ -42,15 +45,19 @@ export async function GET(request: Request) {
     startFromCurrentMonth: false
   });
 
-  const [currentUser, cards, expenses, incomes, fixedExpenses, expectations, exchangeRates, monthlyAdjustments, advancements] = await Promise.all([
+  const [currentUser, cards, categories, expenses, incomes, fixedExpenses, expectations, exchangeRates, monthlyAdjustments, advancements] = await Promise.all([
     prisma.user.findUnique({
       where: { id: auth.userId },
       select: { id: true, username: true }
     }),
     prisma.card.findMany({ where: { userId: auth.userId }, orderBy: { createdAt: "asc" } }),
+    prisma.expenseCategory.findMany({
+      where: { userId: auth.userId, isActive: true },
+      orderBy: [{ isDefault: "desc" }, { name: "asc" }, { createdAt: "asc" }]
+    }),
     prisma.expense.findMany({
       where: { card: { userId: auth.userId } },
-      include: { card: true },
+      include: { card: true, category: true },
       orderBy: [{ date: "desc" }, { createdAt: "desc" }]
     }),
     prisma.incomeSource.findMany({ where: { userId: auth.userId }, orderBy: [{ startMonth: "asc" }, { createdAt: "asc" }] }),
@@ -73,6 +80,7 @@ export async function GET(request: Request) {
     currentUser,
     projection,
     cards,
+    categories,
     expenses: expenses.map((row) => ({
       ...row,
       amount: Number(row.amount),

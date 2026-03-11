@@ -9,6 +9,14 @@ import {
   sourceTypeSelectLabel,
   type SourceType
 } from "@/lib/sourceTypes";
+import {
+  DEFAULT_CUSTOM_CATEGORY_EMOJI,
+  DEFAULT_CUSTOM_CATEGORY_ICON,
+  EXPENSE_CATEGORY_EMOJI_OPTIONS,
+  EXPENSE_CATEGORY_ICON_OPTIONS,
+  expenseCategorySelectLabel,
+  type ExpenseCategoryIconKey
+} from "@/lib/expense-categories";
 
 type Currency = "USD" | "ARS";
 type Tab = "dashboard" | "tracker" | "expenses" | "forecast" | "settings";
@@ -43,6 +51,11 @@ function findCardById(cards: Card[], cardId: string): Card | undefined {
   return cards.find((card) => card.id === cardId);
 }
 
+function findCategoryById(categories: ExpenseCategory[], categoryId: string | null): ExpenseCategory | undefined {
+  if (!categoryId) return undefined;
+  return categories.find((category) => category.id === categoryId);
+}
+
 const MOBILE_TABS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: "dashboard", label: "Home", icon: "◉" },
   { id: "tracker", label: "Tracking", icon: "◈" },
@@ -50,6 +63,9 @@ const MOBILE_TABS: Array<{ id: Tab; label: string; icon: string }> = [
   { id: "forecast", label: "Forecast", icon: "◌" },
   { id: "settings", label: "Settings", icon: "◍" }
 ];
+
+const CREATE_CATEGORY_OPTION = "__create_category__";
+const UNCATEGORIZED_FILTER_OPTION = "__uncategorized__";
 
 interface Card {
   id: string;
@@ -65,8 +81,20 @@ interface Expense {
   amount: number;
   currency: Currency;
   description: string | null;
+  categoryId: string | null;
+  category: ExpenseCategory | null;
   cardId: string;
   card: Card;
+}
+
+interface ExpenseCategory {
+  id: string;
+  key: string;
+  name: string;
+  emoji: string;
+  iconKey: ExpenseCategoryIconKey;
+  isDefault: boolean;
+  isActive: boolean;
 }
 
 interface Income {
@@ -172,6 +200,7 @@ interface Bootstrap {
   } | null;
   projection: ProjectionData;
   cards: Card[];
+  categories: ExpenseCategory[];
   expenses: Expense[];
   incomes: Income[];
   fixedExpenses: FixedExpense[];
@@ -421,6 +450,7 @@ export function FinanceApp() {
   const [editingFixedId, setEditingFixedId] = useState<string | null>(null);
   const [editingExpectationId, setEditingExpectationId] = useState<string | null>(null);
   const [editingAdvancementId, setEditingAdvancementId] = useState<string | null>(null);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
 
   const [adjustmentDrafts, setAdjustmentDrafts] = useState<Record<string, string>>({});
   const [debouncedAdjustmentDrafts, setDebouncedAdjustmentDrafts] = useState<Record<string, string>>({});
@@ -430,17 +460,26 @@ export function FinanceApp() {
   const headerRef = useRef<HTMLElement | null>(null);
 
   const [expenseFilterCard, setExpenseFilterCard] = useState<string>("all");
+  const [expenseFilterCategory, setExpenseFilterCategory] = useState<string>("all");
   const [expenseTimeFilter, setExpenseTimeFilter] = useState<ExpenseTimeFilter>("CURRENT_WEEK");
   const [expenseCustomMonth, setExpenseCustomMonth] = useState<string>(new Date().toISOString().slice(0, 7));
   const [expenseDisplayMode, setExpenseDisplayMode] = useState<ExpenseDisplayMode>("STORED");
   const [expenseDateTouched, setExpenseDateTouched] = useState(false);
+  const [showQuickCategoryForm, setShowQuickCategoryForm] = useState(false);
 
   const [expenseForm, setExpenseForm] = useState({
     date: new Date().toISOString().slice(0, 10),
     cardId: "",
+    categoryId: "",
     amount: "",
     currency: "USD" as Currency,
     description: ""
+  });
+
+  const [categoryForm, setCategoryForm] = useState({
+    name: "",
+    emoji: DEFAULT_CUSTOM_CATEGORY_EMOJI,
+    iconKey: DEFAULT_CUSTOM_CATEGORY_ICON as ExpenseCategoryIconKey
   });
 
   const [cardForm, setCardForm] = useState({ name: "", currency: "USD" as Currency, sourceType: "CREDIT_CARD" as SourceType });
@@ -493,8 +532,12 @@ export function FinanceApp() {
     setVisiblePastMonths(0);
     setVisibleFutureMonths(0);
 
-    if (!expenseForm.cardId && payload.cards[0]) {
-      setExpenseForm((prev) => ({ ...prev, cardId: payload.cards[0].id }));
+    if ((!expenseForm.cardId && payload.cards[0]) || (!expenseForm.categoryId && payload.categories[0])) {
+      setExpenseForm((prev) => ({
+        ...prev,
+        cardId: prev.cardId || payload.cards[0]?.id || "",
+        categoryId: prev.categoryId || payload.categories[0]?.id || ""
+      }));
     }
     if (!expectationForm.cardId && payload.cards[0]) {
       setExpectationForm((prev) => ({ ...prev, cardId: payload.cards[0].id }));
@@ -624,12 +667,17 @@ export function FinanceApp() {
     const bounds = expenseDateBounds(expenseTimeFilter, expenseCustomMonth);
     return data.expenses.filter((expense) => {
       const byCard = expenseFilterCard === "all" || expense.cardId === expenseFilterCard;
+      const byCategory =
+        expenseFilterCategory === "all" ||
+        (expenseFilterCategory === UNCATEGORIZED_FILTER_OPTION
+          ? expense.categoryId == null
+          : expense.categoryId === expenseFilterCategory);
       const expenseDateKey = toUtcExpenseDateKey(expense.date);
       const byFrom = !bounds.from || expenseDateKey >= bounds.from;
       const byTo = !bounds.to || expenseDateKey <= bounds.to;
-      return byCard && byFrom && byTo;
+      return byCard && byCategory && byFrom && byTo;
     });
-  }, [data, expenseFilterCard, expenseTimeFilter, expenseCustomMonth]);
+  }, [data, expenseFilterCard, expenseFilterCategory, expenseTimeFilter, expenseCustomMonth]);
 
   const sortedIncomes = useMemo(() => {
     if (!data) return [];
@@ -659,6 +707,14 @@ export function FinanceApp() {
     return [...data.exchangeRates]
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, 20);
+  }, [data]);
+
+  const sortedCategories = useMemo(() => {
+    if (!data) return [];
+    return [...data.categories].sort((a, b) => {
+      if (a.isDefault !== b.isDefault) return a.isDefault ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
   }, [data]);
 
   const expectationGroups = useMemo(() => {
@@ -905,6 +961,62 @@ export function FinanceApp() {
     return "ok";
   }
 
+  async function createExpenseCategory(
+    payload: { name: string; emoji: string; iconKey: ExpenseCategoryIconKey },
+    tab: Tab,
+    selectInExpenseForm: boolean
+  ) {
+    const normalizedName = payload.name.trim();
+    if (!normalizedName) {
+      setError("Category name is required");
+      return;
+    }
+
+    let created: ExpenseCategory | null = null;
+    const success = await runTabAction(tab, async () => {
+      created = await api<ExpenseCategory>("/api/expense-categories", {
+        method: "POST",
+        body: JSON.stringify({
+          name: normalizedName,
+          emoji: payload.emoji,
+          iconKey: payload.iconKey
+        })
+      });
+    });
+
+    if (success) {
+      if (selectInExpenseForm && created) {
+        setExpenseForm((prev) => ({ ...prev, categoryId: created?.id ?? prev.categoryId }));
+      }
+      setCategoryForm({
+        name: "",
+        emoji: DEFAULT_CUSTOM_CATEGORY_EMOJI,
+        iconKey: DEFAULT_CUSTOM_CATEGORY_ICON
+      });
+      setShowQuickCategoryForm(false);
+    }
+  }
+
+  async function submitCategory(event: React.FormEvent) {
+    event.preventDefault();
+    await createExpenseCategory(categoryForm, "settings", false);
+  }
+
+  async function submitQuickCategory(event: React.FormEvent) {
+    event.preventDefault();
+    await createExpenseCategory(categoryForm, "expenses", true);
+  }
+
+  async function updateCategory(payload: { id: string; name: string; emoji: string; iconKey: ExpenseCategoryIconKey }) {
+    await runTabAction("settings", async () => {
+      await api("/api/expense-categories", {
+        method: "PATCH",
+        body: JSON.stringify(payload)
+      });
+      setEditingCategoryId(null);
+    });
+  }
+
   async function submitExpense(event: React.FormEvent) {
     event.preventDefault();
     await runTabAction("expenses", async () => {
@@ -912,13 +1024,15 @@ export function FinanceApp() {
         method: "POST",
         body: JSON.stringify({
           ...expenseForm,
+          categoryId: expenseForm.categoryId || null,
           dateTimeIso: expenseDateTimeIso(expenseForm.date, !expenseDateTouched),
           amount: Number(expenseForm.amount)
         })
       });
       setExpenseForm({
         date: new Date().toISOString().slice(0, 10),
-        cardId: data?.cards[0]?.id ?? expenseForm.cardId,
+        cardId: expenseForm.cardId || data?.cards[0]?.id || "",
+        categoryId: expenseForm.categoryId || data?.categories[0]?.id || "",
         amount: "",
         currency: "USD",
         description: ""
@@ -927,10 +1041,21 @@ export function FinanceApp() {
     });
   }
 
+  function handleExpenseCategorySelect(value: string) {
+    if (value === CREATE_CATEGORY_OPTION) {
+      setShowQuickCategoryForm(true);
+      setExpenseForm((prev) => ({ ...prev, categoryId: "" }));
+      return;
+    }
+    setShowQuickCategoryForm(false);
+    setExpenseForm((prev) => ({ ...prev, categoryId: value }));
+  }
+
   async function updateExpense(expense: Expense, originalExpense: Expense) {
     const payload: Partial<Expense> & { id: string; dateTimeIso?: string } = { id: expense.id };
     if (expense.amount !== originalExpense.amount) payload.amount = expense.amount;
     if (expense.cardId !== originalExpense.cardId) payload.cardId = expense.cardId;
+    if ((expense.categoryId ?? null) !== (originalExpense.categoryId ?? null)) payload.categoryId = expense.categoryId;
     if (expense.currency !== originalExpense.currency) payload.currency = expense.currency;
     if ((expense.description ?? "") !== (originalExpense.description ?? "")) payload.description = expense.description;
     const expenseDateKey = toLocalExpenseDateKey(expense.date);
@@ -1378,6 +1503,95 @@ export function FinanceApp() {
     .sort((a, b) => Math.abs(b.deviationUsd) - Math.abs(a.deviationUsd));
   const totalDeviationUsd = deviationRows.reduce((acc, row) => acc + row.deviationUsd, 0);
 
+  const uncategorizedCategory: ExpenseCategory = {
+    id: "uncategorized",
+    key: "uncategorized",
+    name: "Uncategorized",
+    emoji: "🏷️",
+    iconKey: "custom",
+    isDefault: false,
+    isActive: true
+  };
+  const categoryById = new Map(data.categories.map((category) => [category.id, category]));
+  const expenseUsdByMonthCategory = new Map<string, Map<string, { usd: number; count: number }>>();
+  for (const expense of data.expenses) {
+    const month = toUtcExpenseDateKey(expense.date).slice(0, 7);
+    const categoryId = expense.categoryId ?? uncategorizedCategory.id;
+    const usd = expense.currency === "USD" ? expense.amount : expense.amount / currentRate;
+    if (!expenseUsdByMonthCategory.has(month)) {
+      expenseUsdByMonthCategory.set(month, new Map());
+    }
+    const categoryMap = expenseUsdByMonthCategory.get(month)!;
+    const prev = categoryMap.get(categoryId) ?? { usd: 0, count: 0 };
+    categoryMap.set(categoryId, { usd: prev.usd + usd, count: prev.count + 1 });
+  }
+
+  function categoryMeta(categoryId: string): ExpenseCategory {
+    return categoryById.get(categoryId) ?? uncategorizedCategory;
+  }
+
+  const currentMonthCategoryRows = [...(expenseUsdByMonthCategory.get(data.projection.currentMonth)?.entries() ?? [])]
+    .map(([categoryId, values]) => ({
+      category: categoryMeta(categoryId),
+      usd: values.usd,
+      count: values.count
+    }))
+    .sort((a, b) => b.usd - a.usd);
+  const currentMonthCategoryMaxUsd = currentMonthCategoryRows[0]?.usd ?? 0;
+
+  const recentMonths = [1, 2, 3, 4, 5, 6].map((delta) => shiftMonth(data.projection.currentMonth, -delta));
+  const mostUsedCategoryRows = (() => {
+    const totals = new Map<string, { usd: number; count: number }>();
+    for (const month of recentMonths) {
+      const rows = expenseUsdByMonthCategory.get(month);
+      if (!rows) continue;
+      for (const [categoryId, values] of rows.entries()) {
+        const prev = totals.get(categoryId) ?? { usd: 0, count: 0 };
+        totals.set(categoryId, { usd: prev.usd + values.usd, count: prev.count + values.count });
+      }
+    }
+    return [...totals.entries()]
+      .map(([categoryId, values]) => ({
+        category: categoryMeta(categoryId),
+        usd: values.usd,
+        count: values.count,
+        avgTicketUsd: values.count > 0 ? values.usd / values.count : 0
+      }))
+      .sort((a, b) => (b.count === a.count ? b.usd - a.usd : b.count - a.count))
+      .slice(0, 8);
+  })();
+
+  const categoryDeviationRows = (() => {
+    const baselineMonths = [1, 2, 3].map((delta) => shiftMonth(data.projection.currentMonth, -delta));
+    const baselineTotals = new Map<string, number>();
+    for (const month of baselineMonths) {
+      const rows = expenseUsdByMonthCategory.get(month);
+      if (!rows) continue;
+      for (const [categoryId, values] of rows.entries()) {
+        baselineTotals.set(categoryId, (baselineTotals.get(categoryId) ?? 0) + values.usd);
+      }
+    }
+    const currentTotals = expenseUsdByMonthCategory.get(data.projection.currentMonth) ?? new Map<string, { usd: number; count: number }>();
+    const allCategoryIds = new Set<string>([
+      ...baselineTotals.keys(),
+      ...currentTotals.keys()
+    ]);
+    return [...allCategoryIds]
+      .map((categoryId) => {
+        const currentUsd = currentTotals.get(categoryId)?.usd ?? 0;
+        const baselineUsd = (baselineTotals.get(categoryId) ?? 0) / baselineMonths.length;
+        return {
+          category: categoryMeta(categoryId),
+          currentUsd,
+          baselineUsd,
+          deviationUsd: currentUsd - baselineUsd
+        };
+      })
+      .filter((row) => row.currentUsd > 0 || row.baselineUsd > 0)
+      .sort((a, b) => Math.abs(b.deviationUsd) - Math.abs(a.deviationUsd))
+      .slice(0, 8);
+  })();
+
   const currentAdjustmentUsd = dashboardCurrentRow?.manualAdjustmentUsd ?? 0;
   const adjustmentHistoryAbs = [1, 2, 3, 4, 5, 6]
     .map((delta) => data.projection.rows.find((row) => row.month === shiftMonth(data.projection.currentMonth, -delta))?.manualAdjustmentUsd ?? 0)
@@ -1512,6 +1726,123 @@ export function FinanceApp() {
                 <h3>Forecast Accuracy (3M)</h3>
                 <strong>{forecastAccuracyPct.toFixed(1)}%</strong>
                 <small>Expected vs actual payment deviation</small>
+              </article>
+            </section>
+
+            <section className="dashboardPanels3">
+              <article className="panel">
+                <h2>Category Spend (Current Month)</h2>
+                <p className="subtle">
+                  Total expenses by category for {toMonthLabel(data.projection.currentMonth)}.
+                </p>
+                {currentMonthCategoryRows.length === 0 ? (
+                  <p className="subtle">No categorized expenses in current month yet.</p>
+                ) : (
+                  <ul className="categoryBars">
+                    {currentMonthCategoryRows.slice(0, 8).map((row) => {
+                      const pct = currentMonthCategoryMaxUsd > 0 ? Math.max(6, (row.usd / currentMonthCategoryMaxUsd) * 100) : 0;
+                      return (
+                        <li key={row.category.id}>
+                          <div className="categoryBarHeader">
+                            <span><CategoryBadge category={row.category} /> {row.category.name}</span>
+                            <strong>{dualCurrencyMetric(row.usd).primary}</strong>
+                          </div>
+                          <div className="categoryBarTrack">
+                            <div className="categoryBarFill" style={{ width: `${pct}%` }} />
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </article>
+
+              <article className="panel">
+                <h2>Most Used Categories (Last 6 Months)</h2>
+                <p className="subtle">Sorted by transaction count, then amount.</p>
+                {mostUsedCategoryRows.length === 0 ? (
+                  <p className="subtle">No recent category data available yet.</p>
+                ) : (
+                  <>
+                    <table className="desktopOnly desktopTable">
+                      <thead>
+                        <tr>
+                          <th>Category</th>
+                          <th>Tx Count</th>
+                          <th>Total</th>
+                          <th>Avg Ticket</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {mostUsedCategoryRows.map((row) => (
+                          <tr key={`most-used-${row.category.id}`}>
+                            <td><CategoryBadge category={row.category} /> {row.category.name}</td>
+                            <td>{row.count}</td>
+                            <td>{dualCurrencyMetric(row.usd).primary}</td>
+                            <td>{dualCurrencyMetric(row.avgTicketUsd).primary}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="mobileOnly">
+                      {mostUsedCategoryRows.map((row) => (
+                        <article key={`most-used-mobile-${row.category.id}`} className="mobileCard">
+                          <h3><CategoryBadge category={row.category} /> {row.category.name}</h3>
+                          <p>Tx count: {row.count}</p>
+                          <p>Total: {dualCurrencyMetric(row.usd).primary}</p>
+                          <p>Avg ticket: {dualCurrencyMetric(row.avgTicketUsd).primary}</p>
+                        </article>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </article>
+
+              <article className="panel">
+                <h2>Category Deviations</h2>
+                <p className="subtle">
+                  Current month vs average of the last 3 months.
+                </p>
+                {categoryDeviationRows.length === 0 ? (
+                  <p className="subtle">No category deviation data available yet.</p>
+                ) : (
+                  <>
+                    <table className="desktopOnly desktopTable">
+                      <thead>
+                        <tr>
+                          <th>Category</th>
+                          <th>Current</th>
+                          <th>Baseline (3M avg)</th>
+                          <th>Deviation</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {categoryDeviationRows.map((row) => (
+                          <tr key={`deviation-${row.category.id}`}>
+                            <td><CategoryBadge category={row.category} /> {row.category.name}</td>
+                            <td>{dualCurrencyMetric(row.currentUsd).primary}</td>
+                            <td>{dualCurrencyMetric(row.baselineUsd).primary}</td>
+                            <td className={row.deviationUsd > 0 ? "dashboardBad" : row.deviationUsd < 0 ? "dashboardGood" : ""}>
+                              {dualCurrencyMetric(row.deviationUsd).primary}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div className="mobileOnly">
+                      {categoryDeviationRows.map((row) => (
+                        <article key={`deviation-mobile-${row.category.id}`} className="mobileCard">
+                          <h3><CategoryBadge category={row.category} /> {row.category.name}</h3>
+                          <p>Current: {dualCurrencyMetric(row.currentUsd).primary}</p>
+                          <p>Baseline: {dualCurrencyMetric(row.baselineUsd).primary}</p>
+                          <p className={row.deviationUsd > 0 ? "dashboardBad" : row.deviationUsd < 0 ? "dashboardGood" : ""}>
+                            Deviation: {dualCurrencyMetric(row.deviationUsd).primary}
+                          </p>
+                        </article>
+                      ))}
+                    </div>
+                  </>
+                )}
               </article>
             </section>
 
@@ -1792,6 +2123,15 @@ export function FinanceApp() {
                     <option key={card.id} value={card.id}>{sourceTypeOptionLabel(card.sourceType, card.name)}</option>
                   ))}
                 </select>
+                <select value={expenseForm.categoryId} onChange={(event) => handleExpenseCategorySelect(event.target.value)}>
+                  <option value="">No category</option>
+                  {sortedCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {expenseCategorySelectLabel(category.emoji, category.name)}
+                    </option>
+                  ))}
+                  <option value={CREATE_CATEGORY_OPTION}>+ Create category...</option>
+                </select>
                 <input type="number" step="0.01" placeholder="Amount" value={expenseForm.amount} onChange={(event) => setExpenseForm((prev) => ({ ...prev, amount: event.target.value }))} required />
                 <select value={expenseForm.currency} onChange={(event) => setExpenseForm((prev) => ({ ...prev, currency: event.target.value as Currency }))}>
                   <option value="USD">USD</option>
@@ -1800,6 +2140,34 @@ export function FinanceApp() {
                 <input placeholder="Description (optional)" value={expenseForm.description} onChange={(event) => setExpenseForm((prev) => ({ ...prev, description: event.target.value }))} />
                 <button type="submit">Save Expense</button>
               </form>
+              {showQuickCategoryForm ? (
+                <form className="inlineForm quickCategoryCreate" onSubmit={submitQuickCategory}>
+                  <input
+                    placeholder="New category name"
+                    value={categoryForm.name}
+                    onChange={(event) => setCategoryForm((prev) => ({ ...prev, name: event.target.value }))}
+                    required
+                  />
+                  <select
+                    value={categoryForm.emoji}
+                    onChange={(event) => setCategoryForm((prev) => ({ ...prev, emoji: event.target.value }))}
+                  >
+                    {EXPENSE_CATEGORY_EMOJI_OPTIONS.map((emoji) => (
+                      <option key={emoji} value={emoji}>{emoji}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={categoryForm.iconKey}
+                    onChange={(event) => setCategoryForm((prev) => ({ ...prev, iconKey: event.target.value as ExpenseCategoryIconKey }))}
+                  >
+                    {EXPENSE_CATEGORY_ICON_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                  <button type="submit">Create and use</button>
+                  <button type="button" className="secondary" onClick={() => setShowQuickCategoryForm(false)}>Cancel</button>
+                </form>
+              ) : null}
             </article>
 
             <article className="panel">
@@ -1818,6 +2186,15 @@ export function FinanceApp() {
                     <SourceBadge sourceType={findCardById(data.cards, expenseFilterCard)?.sourceType} />
                   </p>
                 ) : null}
+                <select value={expenseFilterCategory} onChange={(event) => setExpenseFilterCategory(event.target.value)}>
+                  <option value="all">All categories</option>
+                  <option value={UNCATEGORIZED_FILTER_OPTION}>Uncategorized</option>
+                  {sortedCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {expenseCategorySelectLabel(category.emoji, category.name)}
+                    </option>
+                  ))}
+                </select>
                 <select value={expenseTimeFilter} onChange={(event) => setExpenseTimeFilter(event.target.value as ExpenseTimeFilter)}>
                   {EXPENSE_TIME_FILTERS.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>
@@ -1832,6 +2209,7 @@ export function FinanceApp() {
                   <tr>
                     <th>Date</th>
                     <th>Source</th>
+                    <th>Category</th>
                     <th>Amount</th>
                     <th>Currency</th>
                     <th>Description</th>
@@ -1844,6 +2222,7 @@ export function FinanceApp() {
                       key={expense.id}
                       expense={expense}
                       cards={data.cards}
+                      categories={sortedCategories}
                       expenseDisplayMode={expenseDisplayMode}
                       arsPerUsd={data.projection.currentRateArsPerUsd}
                       isEditing={editingExpenseId === expense.id}
@@ -1861,6 +2240,7 @@ export function FinanceApp() {
                     key={expense.id}
                     expense={expense}
                     cards={data.cards}
+                    categories={sortedCategories}
                     expenseDisplayMode={expenseDisplayMode}
                     arsPerUsd={data.projection.currentRateArsPerUsd}
                     onSave={updateExpense}
@@ -1979,6 +2359,61 @@ export function FinanceApp() {
 
         {activeTab === "settings" && (
           <section className="stack">
+            <article className="panel settingsCategories">
+              <h2>Expense Categories</h2>
+              <details className="itemAccordion">
+                <summary>
+                  <span>Manage Categories</span>
+                  <span className="subtle">{sortedCategories.length} total</span>
+                </summary>
+                <form className="formGrid" onSubmit={submitCategory}>
+                  <input
+                    placeholder="Category name"
+                    value={categoryForm.name}
+                    onChange={(event) => setCategoryForm((prev) => ({ ...prev, name: event.target.value }))}
+                    required
+                  />
+                  <select
+                    value={categoryForm.emoji}
+                    onChange={(event) => setCategoryForm((prev) => ({ ...prev, emoji: event.target.value }))}
+                  >
+                    {EXPENSE_CATEGORY_EMOJI_OPTIONS.map((emoji) => (
+                      <option key={emoji} value={emoji}>{emoji}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={categoryForm.iconKey}
+                    onChange={(event) => setCategoryForm((prev) => ({ ...prev, iconKey: event.target.value as ExpenseCategoryIconKey }))}
+                  >
+                    {EXPENSE_CATEGORY_ICON_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                  <button type="submit">Add Category</button>
+                </form>
+                <ul className="accordionList">
+                  {sortedCategories.map((category) => (
+                    <li key={category.id} className="listRow">
+                      <span>
+                        <CategoryBadge category={category} /> {category.name}
+                      </span>
+                      {category.isDefault ? (
+                        <span className="subtle">Default</span>
+                      ) : (
+                        <EditableCategoryRow
+                          category={category}
+                          isEditing={editingCategoryId === category.id}
+                          onEdit={() => setEditingCategoryId(category.id)}
+                          onCancel={() => setEditingCategoryId(null)}
+                          onSave={updateCategory}
+                        />
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </details>
+            </article>
+
             <article className="panel settingsAccount">
               <h2>Account Security</h2>
               <form className="formGrid" onSubmit={submitPasswordChange}>
@@ -2250,9 +2685,10 @@ export function FinanceApp() {
   );
 }
 
-function ExpenseRow({ expense, cards, expenseDisplayMode, arsPerUsd, isEditing, onStartEdit, onCancelEdit, onSave, onDelete }: {
+function ExpenseRow({ expense, cards, categories, expenseDisplayMode, arsPerUsd, isEditing, onStartEdit, onCancelEdit, onSave, onDelete }: {
   expense: Expense;
   cards: Card[];
+  categories: ExpenseCategory[];
   expenseDisplayMode: ExpenseDisplayMode;
   arsPerUsd: number;
   isEditing: boolean;
@@ -2282,6 +2718,24 @@ function ExpenseRow({ expense, cards, expenseDisplayMode, arsPerUsd, isEditing, 
       <tr>
         <td><input type="date" value={draft.date} onChange={(event) => setDraft((prev) => ({ ...prev, date: event.target.value }))} /></td>
         <td><select value={draft.cardId} onChange={(event) => setDraft((prev) => ({ ...prev, cardId: event.target.value }))}>{cards.map((card) => <option key={card.id} value={card.id}>{sourceTypeOptionLabel(card.sourceType, card.name)}</option>)}</select></td>
+        <td>
+          <select
+            value={draft.categoryId ?? ""}
+            onChange={(event) => {
+              const categoryId = event.target.value || null;
+              setDraft((prev) => ({
+                ...prev,
+                categoryId,
+                category: findCategoryById(categories, categoryId) ?? null
+              }));
+            }}
+          >
+            <option value="">No category</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>{expenseCategorySelectLabel(category.emoji, category.name)}</option>
+            ))}
+          </select>
+        </td>
         <td><input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} /></td>
         <td><select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}><option value="USD">USD</option><option value="ARS">ARS</option></select></td>
         <td><input value={draft.description ?? ""} onChange={(event) => setDraft((prev) => ({ ...prev, description: event.target.value }))} /></td>
@@ -2294,6 +2748,15 @@ function ExpenseRow({ expense, cards, expenseDisplayMode, arsPerUsd, isEditing, 
     <tr>
       <td>{toLocalDateTimeLabel(expense.date)}</td>
       <td><SourceBadge sourceType={expense.card.sourceType} /> {expense.card.name}</td>
+      <td>
+        {expense.category ? (
+          <span className="categoryNameCell">
+            <CategoryBadge category={expense.category} /> {expense.category.name}
+          </span>
+        ) : (
+          <span className="subtle">-</span>
+        )}
+      </td>
       <td>
         <div className="amountCell">
           <span>{mainLabel}</span>
@@ -2310,6 +2773,7 @@ function ExpenseRow({ expense, cards, expenseDisplayMode, arsPerUsd, isEditing, 
 function MobileExpenseCard({
   expense,
   cards,
+  categories,
   expenseDisplayMode,
   arsPerUsd,
   onSave,
@@ -2317,6 +2781,7 @@ function MobileExpenseCard({
 }: {
   expense: Expense;
   cards: Card[];
+  categories: ExpenseCategory[];
   expenseDisplayMode: ExpenseDisplayMode;
   arsPerUsd: number;
   onSave: (expense: Expense, originalExpense: Expense) => Promise<void>;
@@ -2350,6 +2815,22 @@ function MobileExpenseCard({
               <option key={card.id} value={card.id}>{sourceTypeOptionLabel(card.sourceType, card.name)}</option>
             ))}
           </select>
+          <select
+            value={draft.categoryId ?? ""}
+            onChange={(event) => {
+              const categoryId = event.target.value || null;
+              setDraft((prev) => ({
+                ...prev,
+                categoryId,
+                category: findCategoryById(categories, categoryId) ?? null
+              }));
+            }}
+          >
+            <option value="">No category</option>
+            {categories.map((category) => (
+              <option key={category.id} value={category.id}>{expenseCategorySelectLabel(category.emoji, category.name)}</option>
+            ))}
+          </select>
           <input type="number" step="0.01" value={draft.amount} onChange={(event) => setDraft((prev) => ({ ...prev, amount: Number(event.target.value) }))} />
           <select value={draft.currency} onChange={(event) => setDraft((prev) => ({ ...prev, currency: event.target.value as Currency }))}>
             <option value="USD">USD</option>
@@ -2368,6 +2849,7 @@ function MobileExpenseCard({
       <h3><SourceBadge sourceType={expense.card.sourceType} /> {expense.card.name}</h3>
       <p className="mobileMain">{mainLabel}</p>
       {showOriginal ? <p className="subtle">Real: {originalLabel}</p> : null}
+      <p className="subtle">{expense.category ? <><CategoryBadge category={expense.category} /> {expense.category.name}</> : "Category: -"}</p>
       <p className="subtle">Currency: {expense.currency}</p>
       <p className="subtle">{toLocalDateTimeLabel(expense.date)}</p>
       <details>
@@ -2548,6 +3030,169 @@ function DashboardLineChart({
           </span>
         ))}
       </div>
+    </div>
+  );
+}
+
+function CategoryGlyph({ iconKey, className }: { iconKey: ExpenseCategoryIconKey | string; className?: string }) {
+  const safeIconKey = EXPENSE_CATEGORY_ICON_OPTIONS.some((option) => option.value === iconKey)
+    ? iconKey
+    : "custom";
+  return (
+    <svg className={className} viewBox="0 0 16 16" aria-hidden>
+      {safeIconKey === "basket" ? (
+        <>
+          <path d="M3 6.3h10l-1 6.2H4z" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M5.2 6.3l2-2.6M10.8 6.3l-2-2.6" stroke="currentColor" strokeWidth="1.2" />
+        </>
+      ) : null}
+      {safeIconKey === "meal" ? (
+        <>
+          <line x1="5" y1="3" x2="5" y2="13" stroke="currentColor" strokeWidth="1.2" />
+          <line x1="7.2" y1="3" x2="7.2" y2="13" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M10 3v4.2a1.6 1.6 0 0 0 3.2 0V3" fill="none" stroke="currentColor" strokeWidth="1.2" />
+        </>
+      ) : null}
+      {safeIconKey === "transport" ? (
+        <>
+          <rect x="2.2" y="5" width="11.6" height="5" rx="1.2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <circle cx="5.1" cy="11.4" r="1.2" fill="currentColor" />
+          <circle cx="10.9" cy="11.4" r="1.2" fill="currentColor" />
+        </>
+      ) : null}
+      {safeIconKey === "shopping" ? (
+        <>
+          <path d="M4 5.3h8l-1 7H5z" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M6 5.3V4a2 2 0 0 1 4 0v1.3" fill="none" stroke="currentColor" strokeWidth="1.2" />
+        </>
+      ) : null}
+      {safeIconKey === "home" ? (
+        <>
+          <path d="M2.6 7.4L8 3l5.4 4.4" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M4.5 6.9v6h7v-6" fill="none" stroke="currentColor" strokeWidth="1.2" />
+        </>
+      ) : null}
+      {safeIconKey === "health" ? (
+        <>
+          <rect x="3.2" y="3.2" width="9.6" height="9.6" rx="2" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M8 5.2v5.6M5.2 8h5.6" stroke="currentColor" strokeWidth="1.2" />
+        </>
+      ) : null}
+      {safeIconKey === "fun" ? (
+        <>
+          <path d="M3 4.2h10v7.6H3z" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M6.4 6.2l3.8 1.8-3.8 1.8z" fill="currentColor" />
+        </>
+      ) : null}
+      {safeIconKey === "service" ? (
+        <>
+          <path d="M4 3.4h8v9.2H4z" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <line x1="5.5" y1="6.2" x2="10.5" y2="6.2" stroke="currentColor" strokeWidth="1.1" />
+          <line x1="5.5" y1="8.4" x2="10.5" y2="8.4" stroke="currentColor" strokeWidth="1.1" />
+        </>
+      ) : null}
+      {safeIconKey === "education" ? (
+        <>
+          <path d="M2.6 5.3l5.4-2.1 5.4 2.1-5.4 2.1z" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M4.8 6.7v2.8c0 .9 1.5 1.7 3.2 1.7s3.2-.8 3.2-1.7V6.7" fill="none" stroke="currentColor" strokeWidth="1.2" />
+        </>
+      ) : null}
+      {safeIconKey === "travel" ? (
+        <>
+          <path d="M2.5 9.3l11-2.6M6.4 8.4l1.8-4M8.1 8l3.4 2.8" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <circle cx="4.1" cy="10.6" r="1.1" fill="currentColor" />
+        </>
+      ) : null}
+      {safeIconKey === "utilities" ? (
+        <>
+          <path d="M7.2 2.8l-2.1 4h2v6.4l2.7-4.8h-2z" fill="currentColor" />
+        </>
+      ) : null}
+      {safeIconKey === "pet" ? (
+        <>
+          <circle cx="8" cy="9.1" r="2.3" fill="none" stroke="currentColor" strokeWidth="1.2" />
+          <circle cx="5.1" cy="5.4" r="1.1" fill="currentColor" />
+          <circle cx="7.2" cy="4.4" r="1.1" fill="currentColor" />
+          <circle cx="8.8" cy="4.4" r="1.1" fill="currentColor" />
+          <circle cx="10.9" cy="5.4" r="1.1" fill="currentColor" />
+        </>
+      ) : null}
+      {safeIconKey === "custom" ? (
+        <>
+          <circle cx="8" cy="8" r="5.2" fill="none" stroke="currentColor" strokeWidth="1.2" strokeDasharray="2 2" />
+          <circle cx="8" cy="8" r="1" fill="currentColor" />
+        </>
+      ) : null}
+    </svg>
+  );
+}
+
+function CategoryBadge({ category }: { category: ExpenseCategory }) {
+  return (
+    <span className={`categoryBadge categoryIcon-${category.iconKey}`}>
+      <CategoryGlyph iconKey={category.iconKey} className="categoryBadgeIcon" />
+      <span className="categoryBadgeEmoji" aria-hidden>{category.emoji}</span>
+    </span>
+  );
+}
+
+function EditableCategoryRow({
+  category,
+  isEditing,
+  onEdit,
+  onCancel,
+  onSave
+}: {
+  category: ExpenseCategory;
+  isEditing: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onSave: (payload: { id: string; name: string; emoji: string; iconKey: ExpenseCategoryIconKey }) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState({
+    name: category.name,
+    emoji: category.emoji,
+    iconKey: category.iconKey
+  });
+
+  useEffect(() => {
+    setDraft({
+      name: category.name,
+      emoji: category.emoji,
+      iconKey: category.iconKey
+    });
+  }, [category]);
+
+  if (isEditing) {
+    return (
+      <div className="categoryEditRow">
+        <div className="inlineForm">
+          <input value={draft.name} onChange={(event) => setDraft((prev) => ({ ...prev, name: event.target.value }))} />
+          <select value={draft.emoji} onChange={(event) => setDraft((prev) => ({ ...prev, emoji: event.target.value }))}>
+            {EXPENSE_CATEGORY_EMOJI_OPTIONS.map((emoji) => (
+              <option key={emoji} value={emoji}>{emoji}</option>
+            ))}
+          </select>
+          <select
+            value={draft.iconKey}
+            onChange={(event) => setDraft((prev) => ({ ...prev, iconKey: event.target.value as ExpenseCategoryIconKey }))}
+          >
+            {EXPENSE_CATEGORY_ICON_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+        <div className="rowButtons">
+          <button onClick={() => void onSave({ id: category.id, name: draft.name, emoji: draft.emoji, iconKey: draft.iconKey })}>Save</button>
+          <button className="secondary" onClick={onCancel}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rowButtons">
+      <button onClick={onEdit}>Edit</button>
     </div>
   );
 }

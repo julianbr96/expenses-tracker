@@ -472,6 +472,37 @@ body {
   text-align: right;
 }
 
+.categoryBars {
+  display: grid;
+  gap: 10px;
+}
+
+.categoryBars li {
+  display: grid;
+  gap: 6px;
+}
+
+.categoryBarHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.categoryBarTrack {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(40, 66, 97, 0.14);
+  overflow: hidden;
+}
+
+.categoryBarFill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(45, 111, 100, 0.75), rgba(79, 145, 132, 0.94));
+}
+
 .dashboardFxInputRow {
   margin-top: 8px;
   margin-bottom: 10px;
@@ -496,10 +527,6 @@ body {
   order: 1;
 }
 
-.stack > .settingsAccount {
-  order: 7;
-}
-
 .stack > .settingsExpectations {
   order: 2;
 }
@@ -516,8 +543,16 @@ body {
   order: 5;
 }
 
-.stack > .settingsCards {
+.stack > .settingsCategories {
   order: 6;
+}
+
+.stack > .settingsCards {
+  order: 7;
+}
+
+.stack > .settingsAccount {
+  order: 8;
 }
 
 ul {
@@ -753,6 +788,45 @@ table {
   height: 13px;
   flex: 0 0 13px;
 }
+
+.categoryBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.16);
+  color: #2a3140;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.categoryBadgeIcon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 13px;
+}
+
+.categoryBadgeEmoji {
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.categoryIcon-basket { background: rgba(88, 129, 113, 0.2); color: #275a4d; }
+.categoryIcon-meal { background: rgba(183, 117, 76, 0.2); color: #7a3d1c; }
+.categoryIcon-transport { background: rgba(85, 118, 184, 0.2); color: #2c4d88; }
+.categoryIcon-shopping { background: rgba(143, 98, 172, 0.2); color: #62357d; }
+.categoryIcon-home { background: rgba(91, 126, 112, 0.2); color: #2e584b; }
+.categoryIcon-health { background: rgba(189, 92, 92, 0.2); color: #7f2f2f; }
+.categoryIcon-fun { background: rgba(126, 108, 184, 0.2); color: #4f3f85; }
+.categoryIcon-service { background: rgba(129, 118, 102, 0.2); color: #5d4e3e; }
+.categoryIcon-education { background: rgba(85, 112, 170, 0.2); color: #2d4a7a; }
+.categoryIcon-travel { background: rgba(87, 140, 173, 0.2); color: #2f5f79; }
+.categoryIcon-utilities { background: rgba(186, 137, 60, 0.2); color: #7d5413; }
+.categoryIcon-pet { background: rgba(199, 118, 140, 0.2); color: #8c304d; }
+.categoryIcon-custom { background: rgba(120, 120, 120, 0.2); color: #4e4e4e; }
 
 .sourceType-credit_card {
   background: rgba(80, 104, 190, 0.2);
@@ -1015,6 +1089,13 @@ th {
   gap: 2px;
 }
 
+.categoryNameCell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
 .listRow {
   display: flex;
   justify-content: space-between;
@@ -1029,6 +1110,16 @@ th {
   gap: 8px;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   width: 100%;
+}
+
+.quickCategoryCreate {
+  margin-top: 10px;
+}
+
+.categoryEditRow {
+  width: 100%;
+  display: grid;
+  gap: 8px;
 }
 
 .expectationAccordionStack {

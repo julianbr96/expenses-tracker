@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { ensureDefaultExpenseCategories } from "@/lib/expense-categories-db";
 import {
   claimLegacyDataForUser,
   hashPassword,
@@ -41,6 +42,7 @@ export async function POST(request: Request) {
   }
 
   await claimLegacyDataForUser(user.id);
+  await ensureDefaultExpenseCategories(user.id);
   const tokens = await issueAuthTokens(user.id);
 
   const response = NextResponse.json({ ok: true, user: { id: user.id, username: user.username } });

@@ -2,11 +2,13 @@ import { prisma } from "@/lib/db";
 import { generateProjection } from "@/lib/finance";
 import { loadModelForProjection } from "@/lib/load-model";
 import { verifyPassword } from "@/lib/auth";
+import { ensureDefaultExpenseCategories } from "@/lib/expense-categories-db";
 import { NextResponse } from "next/server";
 
 type ConversationStep =
   | "IDLE"
   | "AWAITING_CARD"
+  | "AWAITING_CATEGORY"
   | "AWAITING_AMOUNT"
   | "AWAITING_CURRENCY"
   | "AWAITING_DATE"
@@ -33,6 +35,7 @@ interface InlineKeyboardMarkup {
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET ?? "";
+const CATEGORY_PAGE_SIZE = 6;
 const ALLOWED_CHAT_IDS = new Set(
   (process.env.TELEGRAM_ALLOWED_CHAT_IDS ?? "")
     .split(",")
@@ -103,8 +106,42 @@ function cardPrompt(cards: Array<{ id: string; name: string }>): string {
   return "Add expense: choose card.";
 }
 
+function categoryPrompt(
+  categories: Array<{ id: string; name: string; emoji: string }>,
+  page: number
+): string {
+  if (categories.length === 0) {
+    return "No categories found. Send amount to continue without category.";
+  }
+  const totalPages = Math.max(1, Math.ceil(categories.length / CATEGORY_PAGE_SIZE));
+  const safePage = Math.max(0, Math.min(page, totalPages - 1));
+  return `Choose category (most used first). Page ${safePage + 1}/${totalPages}.`;
+}
+
 function buildCardKeyboard(cards: Array<{ id: string; name: string }>): InlineKeyboardMarkup {
   const rows = cards.map((card) => [{ text: card.name, callback_data: `add:card:${card.id}` }]);
+  rows.push([{ text: "Cancel", callback_data: "add:cancel" }]);
+  return { inline_keyboard: rows };
+}
+
+function buildCategoryKeyboard(
+  categories: Array<{ id: string; name: string; emoji: string }>,
+  page: number
+): InlineKeyboardMarkup {
+  const totalPages = Math.max(1, Math.ceil(Math.max(categories.length, 1) / CATEGORY_PAGE_SIZE));
+  const safePage = Math.max(0, Math.min(page, totalPages - 1));
+  const start = safePage * CATEGORY_PAGE_SIZE;
+  const pageItems = categories.slice(start, start + CATEGORY_PAGE_SIZE);
+  const rows = pageItems.map((category) => [
+    { text: `${category.emoji} ${category.name}`, callback_data: `add:category:${category.id}` }
+  ]);
+
+  const navRow: Array<{ text: string; callback_data: string }> = [];
+  if (safePage > 0) navRow.push({ text: "◀ Prev", callback_data: `add:category:page:${safePage - 1}` });
+  if (safePage < totalPages - 1) navRow.push({ text: "More ▶", callback_data: `add:category:page:${safePage + 1}` });
+  if (navRow.length > 0) rows.push(navRow);
+
+  rows.push([{ text: "Skip category", callback_data: "add:category:skip" }]);
   rows.push([{ text: "Cancel", callback_data: "add:cancel" }]);
   return { inline_keyboard: rows };
 }
@@ -161,6 +198,27 @@ function findCardByInput(
   return fuzzy ?? null;
 }
 
+function findCategoryByInput(
+  categories: Array<{ id: string; name: string; emoji: string }>,
+  input: string
+): { id: string; name: string; emoji: string } | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  const maybeIndex = Number(trimmed);
+  if (Number.isInteger(maybeIndex) && maybeIndex >= 1 && maybeIndex <= categories.length) {
+    return categories[maybeIndex - 1];
+  }
+
+  const exact = categories.find((category) => category.name.toLowerCase() === trimmed.toLowerCase());
+  if (exact) return exact;
+
+  const fuzzy = categories.find((category) =>
+    category.name.toLowerCase().includes(trimmed.toLowerCase())
+  );
+  return fuzzy ?? null;
+}
+
 async function callTelegram(method: string, payload: Record<string, unknown>) {
   if (!BOT_TOKEN) return;
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
@@ -192,6 +250,38 @@ async function listActiveCardsForUser(userId: string): Promise<Array<{ id: strin
     where: { userId, isActive: true },
     orderBy: { createdAt: "asc" },
     select: { id: true, name: true }
+  });
+}
+
+async function listCategoriesForUser(
+  userId: string
+): Promise<Array<{ id: string; name: string; emoji: string }>> {
+  await ensureDefaultExpenseCategories(userId);
+
+  const [categories, categoryUsageRows] = await Promise.all([
+    prisma.expenseCategory.findMany({
+      where: { userId, isActive: true },
+      select: { id: true, name: true, emoji: true }
+    }),
+    prisma.expense.findMany({
+      where: {
+        card: { userId },
+        categoryId: { not: null }
+      },
+      select: { categoryId: true }
+    })
+  ]);
+
+  const usageByCategoryId = new Map<string, number>();
+  for (const row of categoryUsageRows) {
+    if (!row.categoryId) continue;
+    usageByCategoryId.set(row.categoryId, (usageByCategoryId.get(row.categoryId) ?? 0) + 1);
+  }
+
+  return categories.sort((a, b) => {
+    const usageDiff = (usageByCategoryId.get(b.id) ?? 0) - (usageByCategoryId.get(a.id) ?? 0);
+    if (usageDiff !== 0) return usageDiff;
+    return a.name.localeCompare(b.name);
   });
 }
 
@@ -227,6 +317,8 @@ async function clearSessionFlow(chatId: bigint) {
     update: {
       step: "IDLE",
       pendingCardId: null,
+      pendingCategoryId: null,
+      pendingCategoryPage: 0,
       pendingAmount: null,
       pendingCurrency: null,
       pendingDate: null,
@@ -243,6 +335,8 @@ async function logoutSession(chatId: bigint) {
       userId: null,
       step: "IDLE",
       pendingCardId: null,
+      pendingCategoryId: null,
+      pendingCategoryPage: 0,
       pendingAmount: null,
       pendingCurrency: null,
       pendingDate: null,
@@ -277,16 +371,29 @@ async function handleCreateExpense(chatId: bigint, userId: string, description: 
     return;
   }
 
+  if (session.pendingCategoryId) {
+    const category = await prisma.expenseCategory.findFirst({
+      where: { id: session.pendingCategoryId, userId, isActive: true },
+      select: { id: true }
+    });
+    if (!category) {
+      await clearSessionFlow(chatId);
+      await sendTelegramMessage(chatId, "Selected category is no longer available. Start again with /add.");
+      return;
+    }
+  }
+
   try {
     const created = await prisma.expense.create({
       data: {
         cardId: session.pendingCardId,
+        categoryId: session.pendingCategoryId ?? null,
         amount: session.pendingAmount,
         currency: session.pendingCurrency,
         date: session.pendingDate,
         description
       },
-      include: { card: true }
+      include: { card: true, category: true }
     });
 
     await clearSessionFlow(chatId);
@@ -296,6 +403,7 @@ async function handleCreateExpense(chatId: bigint, userId: string, description: 
       [
         "Expense added successfully.",
         `${created.card.name} - ${formatMoney(Number(created.amount), created.currency as AppCurrency)} - ${toDateOnly(created.date)}`,
+        `Category: ${created.category ? `${created.category.emoji} ${created.category.name}` : "None"}`,
         remainingMessage ?? "Could not calculate card remaining."
       ].join("\n")
     );
@@ -311,6 +419,7 @@ async function handleCallback(
   callbackData: string,
   step: ConversationStep,
   cards: Array<{ id: string; name: string }>,
+  categories: Array<{ id: string; name: string; emoji: string }>,
   userId: string
 ) {
   await answerCallbackQuery(callbackId);
@@ -336,9 +445,68 @@ async function handleCallback(
 
     await prisma.telegramSession.update({
       where: { chatId },
-      data: { step: "AWAITING_AMOUNT", pendingCardId: selected.id }
+      data: {
+        step: "AWAITING_CATEGORY",
+        pendingCardId: selected.id,
+        pendingCategoryId: null,
+        pendingCategoryPage: 0
+      }
     });
-    await sendTelegramMessage(chatId, `Card: ${selected.name}\nNow send amount (example: 120.50).`);
+    await sendTelegramMessage(
+      chatId,
+      `Card: ${selected.name}\n${categoryPrompt(categories, 0)}`,
+      buildCategoryKeyboard(categories, 0)
+    );
+    return;
+  }
+
+  if (callbackData.startsWith("add:category:")) {
+    if (step !== "AWAITING_CATEGORY") {
+      await sendTelegramMessage(chatId, "Please choose card first.");
+      return;
+    }
+
+    if (callbackData === "add:category:skip") {
+      await prisma.telegramSession.update({
+        where: { chatId },
+        data: {
+          step: "AWAITING_AMOUNT",
+          pendingCategoryId: null,
+          pendingCategoryPage: 0
+        }
+      });
+      await sendTelegramMessage(chatId, "No category selected.\nNow send amount (example: 120.50).");
+      return;
+    }
+
+    if (callbackData.startsWith("add:category:page:")) {
+      const pageRaw = callbackData.slice("add:category:page:".length);
+      const parsedPage = Number(pageRaw);
+      const page = Number.isFinite(parsedPage) ? Math.max(0, Math.trunc(parsedPage)) : 0;
+      await prisma.telegramSession.update({
+        where: { chatId },
+        data: { pendingCategoryPage: page }
+      });
+      await sendTelegramMessage(chatId, categoryPrompt(categories, page), buildCategoryKeyboard(categories, page));
+      return;
+    }
+
+    const categoryId = callbackData.slice("add:category:".length);
+    const selected = categories.find((category) => category.id === categoryId);
+    if (!selected) {
+      await sendTelegramMessage(chatId, "Category not found. Choose another one.", buildCategoryKeyboard(categories, 0));
+      return;
+    }
+
+    await prisma.telegramSession.update({
+      where: { chatId },
+      data: {
+        step: "AWAITING_AMOUNT",
+        pendingCategoryId: selected.id,
+        pendingCategoryPage: 0
+      }
+    });
+    await sendTelegramMessage(chatId, `Category: ${selected.emoji} ${selected.name}\nNow send amount (example: 120.50).`);
     return;
   }
 
@@ -453,7 +621,8 @@ export async function POST(request: Request) {
     }
 
     const cards = await listActiveCardsForUser(userId);
-    await handleCallback(chatId, callbackId, callbackData, step, cards, userId);
+    const categories = await listCategoriesForUser(userId);
+    await handleCallback(chatId, callbackId, callbackData, step, cards, categories, userId);
     return NextResponse.json({ ok: true });
   }
 
@@ -471,7 +640,7 @@ export async function POST(request: Request) {
           "Commands:",
           "/login <username> <password> - link this chat to a user",
           "/logout - unlink current user",
-          "/add - guided expense creation with buttons",
+          "/add - guided expense creation with source/category and buttons",
           "/remaining - remaining expected spend for all cards",
           "/remaining <card> - remaining for one card (name or index)",
           "/cancel - cancel current flow"
@@ -506,6 +675,8 @@ export async function POST(request: Request) {
           userId: user.id,
           step: "IDLE",
           pendingCardId: null,
+          pendingCategoryId: null,
+          pendingCategoryPage: 0,
           pendingAmount: null,
           pendingCurrency: null,
           pendingDate: null,
@@ -534,6 +705,7 @@ export async function POST(request: Request) {
     }
 
     const cards = await listActiveCardsForUser(userId);
+    const categories = await listCategoriesForUser(userId);
 
     if (command === "/add") {
       await prisma.telegramSession.update({
@@ -541,6 +713,8 @@ export async function POST(request: Request) {
         data: {
           step: "AWAITING_CARD",
           pendingCardId: null,
+          pendingCategoryId: null,
+          pendingCategoryPage: 0,
           pendingAmount: null,
           pendingCurrency: null,
           pendingDate: null,
@@ -577,6 +751,7 @@ export async function POST(request: Request) {
   }
 
   const cards = await listActiveCardsForUser(userId);
+  const categories = await listCategoriesForUser(userId);
 
   if (step === "IDLE") {
     await sendTelegramMessage(chatId, "No active flow. Use /add to add an expense.");
@@ -593,11 +768,55 @@ export async function POST(request: Request) {
     await prisma.telegramSession.update({
       where: { chatId },
       data: {
-        step: "AWAITING_AMOUNT",
-        pendingCardId: selected.id
+        step: "AWAITING_CATEGORY",
+        pendingCardId: selected.id,
+        pendingCategoryId: null,
+        pendingCategoryPage: 0
       }
     });
-    await sendTelegramMessage(chatId, `Card: ${selected.name}\nNow send amount (example: 120.50).`);
+    await sendTelegramMessage(
+      chatId,
+      `Card: ${selected.name}\n${categoryPrompt(categories, 0)}`,
+      buildCategoryKeyboard(categories, 0)
+    );
+    return NextResponse.json({ ok: true });
+  }
+
+  if (step === "AWAITING_CATEGORY") {
+    const lowered = text.trim().toLowerCase();
+    if (lowered === "-" || lowered === "skip" || lowered === "none") {
+      await prisma.telegramSession.update({
+        where: { chatId },
+        data: {
+          step: "AWAITING_AMOUNT",
+          pendingCategoryId: null,
+          pendingCategoryPage: 0
+        }
+      });
+      await sendTelegramMessage(chatId, "No category selected.\nNow send amount (example: 120.50).");
+      return NextResponse.json({ ok: true });
+    }
+
+    const selected = findCategoryByInput(categories, text);
+    if (!selected) {
+      const currentPage = existingSession.pendingCategoryPage ?? 0;
+      await sendTelegramMessage(
+        chatId,
+        `Category not found. ${categoryPrompt(categories, currentPage)}`,
+        buildCategoryKeyboard(categories, currentPage)
+      );
+      return NextResponse.json({ ok: true });
+    }
+
+    await prisma.telegramSession.update({
+      where: { chatId },
+      data: {
+        step: "AWAITING_AMOUNT",
+        pendingCategoryId: selected.id,
+        pendingCategoryPage: 0
+      }
+    });
+    await sendTelegramMessage(chatId, `Category: ${selected.emoji} ${selected.name}\nNow send amount (example: 120.50).`);
     return NextResponse.json({ ok: true });
   }
 

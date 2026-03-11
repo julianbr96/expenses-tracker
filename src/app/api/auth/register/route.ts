@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db";
 import { claimLegacyDataForUser, hashPassword, issueAuthTokens, setAuthCookies } from "@/lib/auth";
+import { ensureDefaultExpenseCategories } from "@/lib/expense-categories-db";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -28,6 +29,7 @@ export async function POST(request: Request) {
   });
 
   await claimLegacyDataForUser(user.id);
+  await ensureDefaultExpenseCategories(user.id);
   const tokens = await issueAuthTokens(user.id);
 
   const response = NextResponse.json({ ok: true, user: { id: user.id, username: user.username } }, { status: 201 });
