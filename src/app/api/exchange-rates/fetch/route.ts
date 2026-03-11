@@ -117,7 +117,7 @@ function resolveProviderConfig() {
   return { baseUrl, apiKey, source };
 }
 
-async function syncExternalRate() {
+async function syncExternalRate(userId: string) {
   const { baseUrl, apiKey, source } = resolveProviderConfig();
 
   if (!baseUrl) {
@@ -157,12 +157,18 @@ async function syncExternalRate() {
   const dateKey = parsePayloadDate(payload);
   const date = new Date(`${dateKey}T00:00:00.000Z`);
 
-  const row = await prisma.exchangeRate.upsert({
-    where: { date },
+  const row = await prisma.userExchangeRate.upsert({
+    where: {
+      userId_date: {
+        userId,
+        date
+      }
+    },
     create: {
       date,
       arsPerUsd,
-      source
+      source,
+      userId
     },
     update: {
       arsPerUsd,
@@ -179,11 +185,11 @@ async function syncExternalRate() {
 export async function POST(request: Request) {
   const auth = requireUserId(request);
   if ("response" in auth) return auth.response;
-  return syncExternalRate();
+  return syncExternalRate(auth.userId);
 }
 
 export async function GET(request: Request) {
   const auth = requireUserId(request);
   if ("response" in auth) return auth.response;
-  return syncExternalRate();
+  return syncExternalRate(auth.userId);
 }

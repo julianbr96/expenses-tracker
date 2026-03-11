@@ -15,7 +15,8 @@ export async function GET(request: Request) {
   const auth = requireUserId(request);
   if ("response" in auth) return auth.response;
 
-  const rows = await prisma.exchangeRate.findMany({
+  const rows = await prisma.userExchangeRate.findMany({
+    where: { userId: auth.userId },
     orderBy: { date: "desc" },
     take: appEnv.exchangeRatesHistoryLimit
   });
@@ -38,12 +39,18 @@ export async function POST(request: Request) {
   }
 
   const date = new Date(`${parsed.data.date}T00:00:00.000Z`);
-  const row = await prisma.exchangeRate.upsert({
-    where: { date },
+  const row = await prisma.userExchangeRate.upsert({
+    where: {
+      userId_date: {
+        userId: auth.userId,
+        date
+      }
+    },
     create: {
       date,
       arsPerUsd: parsed.data.arsPerUsd,
-      source: parsed.data.source || null
+      source: parsed.data.source || null,
+      userId: auth.userId
     },
     update: {
       arsPerUsd: parsed.data.arsPerUsd,

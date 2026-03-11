@@ -564,6 +564,36 @@ ul {
   margin-top: 0;
 }
 
+.fxStatusBanner {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(214, 117, 44, 0.35);
+  background: rgba(255, 244, 225, 0.82);
+  display: grid;
+  gap: 4px;
+}
+
+.fxStatusBanner strong {
+  color: #7a3b0d;
+}
+
+.fxStatusBanner span {
+  color: #864a1d;
+  word-break: break-word;
+}
+
+.fxStatusBanner a {
+  color: #8f3506;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  width: fit-content;
+}
+
+.fxInlineWarning {
+  color: #8f3506;
+}
+
 .forecastActions {
   margin-bottom: 10px;
   display: flex;

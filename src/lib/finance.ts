@@ -101,6 +101,12 @@ export interface ProjectionOutput {
   };
   paymentMonth: string;
   currentRateArsPerUsd: number;
+  fxStatus: {
+    isConfigured: boolean;
+    isStale: boolean;
+    lastUpdatedDate: string | null;
+    staleAfterDays: number;
+  };
   startMonth: string;
 }
 
@@ -110,6 +116,15 @@ function round2(value: number): number {
 
 function normalizeRateDate(dateLike: string): string {
   return dateLike.slice(0, 10);
+}
+
+function utcDateFromKey(dateKey: string): Date {
+  return new Date(`${dateKey}T00:00:00.000Z`);
+}
+
+function fullDaysBetweenUtc(fromDateKey: string, toDateKey: string): number {
+  const diffMs = utcDateFromKey(toDateKey).getTime() - utcDateFromKey(fromDateKey).getTime();
+  return Math.floor(diffMs / (1000 * 60 * 60 * 24));
 }
 
 function buildRateLookup(exchangeRates: ExchangeRateRecord[]) {
@@ -298,6 +313,10 @@ export function generateProjection(input: ProjectionInput): ProjectionOutput {
   const paymentMonth = addMonths(currentMonth, 1);
   const today = new Date().toISOString().slice(0, 10);
   const currentRateArsPerUsd = rateLookup.getRate(today);
+  const lastUpdatedDate = rateLookup.sorted.length > 0 ? rateLookup.sorted[rateLookup.sorted.length - 1].date : null;
+  const staleAfterDays = 14;
+  const isConfigured = Boolean(lastUpdatedDate);
+  const isStale = isConfigured && lastUpdatedDate ? fullDaysBetweenUtc(lastUpdatedDate, today) >= staleAfterDays : false;
 
   const cardTracker: CardTrackerRow[] = input.cards.map((card) => {
     const actual = actualByMonthCard.get(currentMonth)?.get(card.id) ?? 0;
@@ -337,6 +356,12 @@ export function generateProjection(input: ProjectionInput): ProjectionOutput {
     },
     paymentMonth,
     currentRateArsPerUsd,
+    fxStatus: {
+      isConfigured,
+      isStale,
+      lastUpdatedDate,
+      staleAfterDays
+    },
     startMonth: firstMonth
   };
 }

@@ -137,6 +137,12 @@ interface ProjectionData {
   currentMonth: string;
   paymentMonth: string;
   currentRateArsPerUsd: number;
+  fxStatus: {
+    isConfigured: boolean;
+    isStale: boolean;
+    lastUpdatedDate: string | null;
+    staleAfterDays: number;
+  };
   startMonth: string;
   rows: ProjectionRow[];
   cardTracker: {
@@ -1404,6 +1410,12 @@ export function FinanceApp() {
   const fxNetUpArs = currentNetUsd * fxRateUp;
   const fxExpensesDeltaArs = fxExpensesScenarioArs - fxExpensesBaseArs;
   const fxNetDeltaArs = fxNetScenarioArs - fxNetBaseArs;
+  const fxStatus = data.projection.fxStatus;
+  const showMissingFxWarning = !fxStatus.isConfigured;
+  const showStaleFxWarning = fxStatus.isConfigured && fxStatus.isStale;
+  const fxLastUpdatedLabel = fxStatus.lastUpdatedDate
+    ? toLocalDateTimeLabel(`${fxStatus.lastUpdatedDate}T00:00:00.000Z`)
+    : null;
 
   return (
     <main className="container">
@@ -1443,6 +1455,30 @@ export function FinanceApp() {
             <span>{loaderStatus}</span>
           </div>
         )}
+
+        {showMissingFxWarning ? (
+          <aside className="fxStatusBanner" role="status">
+            <strong>Exchange rate not configured for this user.</strong>
+            <span>
+              Add at least one ARS/USD rate in Settings. Until then, projections use the default fallback rate.
+            </span>
+            <a href="https://www.dolarito.ar/" target="_blank" rel="noreferrer">
+              Check rates on Dolarito
+            </a>
+          </aside>
+        ) : null}
+
+        {!showMissingFxWarning && showStaleFxWarning ? (
+          <aside className="fxStatusBanner" role="status">
+            <strong>Exchange rate is stale.</strong>
+            <span>
+              Last update: {fxLastUpdatedLabel ?? "-"} ({fxStatus.lastUpdatedDate}). It has not been updated in {fxStatus.staleAfterDays} days or more.
+            </span>
+            <a href="https://www.dolarito.ar/" target="_blank" rel="noreferrer">
+              Check rates on Dolarito
+            </a>
+          </aside>
+        ) : null}
 
         {activeTab === "dashboard" && (
           <section className="stack dashboardStack">
@@ -2156,6 +2192,22 @@ export function FinanceApp() {
 
             <article className="panel settingsExchange">
               <h2>Exchange Rate (ARS per USD)</h2>
+              <p className="subtle">
+                Rates are scoped per user. Need reference values?{" "}
+                <a href="https://www.dolarito.ar/" target="_blank" rel="noreferrer">
+                  Check rates on Dolarito
+                </a>.
+              </p>
+              {showMissingFxWarning ? (
+                <p className="subtle fxInlineWarning">
+                  No exchange rate configured for this user yet.
+                </p>
+              ) : null}
+              {showStaleFxWarning ? (
+                <p className="subtle fxInlineWarning">
+                  Latest rate ({fxStatus.lastUpdatedDate}) is older than {fxStatus.staleAfterDays} days.
+                </p>
+              ) : null}
               <form className="formGrid" onSubmit={submitRate}>
                 <input type="date" value={rateForm.date} onChange={(event) => setRateForm((prev) => ({ ...prev, date: event.target.value }))} required />
                 <input type="number" step="0.000001" placeholder="ARS per USD" value={rateForm.arsPerUsd} onChange={(event) => setRateForm((prev) => ({ ...prev, arsPerUsd: event.target.value }))} required />

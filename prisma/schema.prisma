@@ -114,6 +114,20 @@ model ExchangeRate {
   updatedAt DateTime @updatedAt
 }
 
+model UserExchangeRate {
+  id        String   @id @default(cuid())
+  date      DateTime
+  arsPerUsd Decimal  @db.Decimal(14, 6)
+  source    String?
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, date])
+  @@index([userId, date])
+}
+
 model MonthlyAdjustment {
   id        String   @id @default(cuid())
   month     String
@@ -158,6 +172,7 @@ model User {
   expectations  SpendingExpectation[]
   adjustments   MonthlyAdjustment[]
   advancements  Advancement[]
+  userExchangeRates UserExchangeRate[]
   refreshTokens AuthRefreshToken[]
   telegramSessions TelegramSession[]
 }

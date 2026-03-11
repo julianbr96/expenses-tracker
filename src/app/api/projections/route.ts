@@ -60,7 +60,8 @@ export async function GET(request: Request) {
       include: { card: true },
       orderBy: [{ month: "asc" }, { createdAt: "asc" }]
     }),
-    prisma.exchangeRate.findMany({
+    prisma.userExchangeRate.findMany({
+      where: { userId: auth.userId },
       orderBy: { date: "desc" },
       take: appEnv.exchangeRatesHistoryLimit
     }),

@@ -12,7 +12,12 @@ export async function loadModelForProjection(userId?: string) {
     prisma.incomeSource.findMany({ where: userScoped, orderBy: [{ startMonth: "asc" }, { createdAt: "asc" }] }),
     prisma.fixedExpense.findMany({ where: userScoped, orderBy: [{ startMonth: "asc" }, { createdAt: "asc" }] }),
     prisma.spendingExpectation.findMany({ where: userScoped, orderBy: [{ month: "asc" }, { createdAt: "asc" }] }),
-    prisma.exchangeRate.findMany({ orderBy: { date: "asc" } }),
+    userId
+      ? prisma.userExchangeRate.findMany({
+          where: { userId },
+          orderBy: { date: "asc" }
+        })
+      : Promise.resolve([]),
     prisma.monthlyAdjustment.findMany({ where: userScoped, orderBy: { month: "asc" } }),
     prisma.advancement.findMany({ where: userScoped, orderBy: [{ month: "asc" }, { createdAt: "asc" }] })
   ]);
