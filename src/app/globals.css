@@ -24,6 +24,10 @@ body {
   overscroll-behavior-x: none;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   color: var(--ink);
@@ -1435,8 +1439,16 @@ th {
 
   input,
   select,
+  textarea,
   button {
     min-height: 42px;
+  }
+
+  /* iOS Safari zooms focused fields when font-size < 16px. */
+  input,
+  select,
+  textarea {
+    font-size: 16px;
   }
 
   table {
