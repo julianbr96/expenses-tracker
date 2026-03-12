@@ -46,6 +46,7 @@ interface ExpectationRecord {
 interface ExchangeRateRecord {
   date: string;
   arsPerUsd: number;
+  createdAt?: string;
 }
 
 interface MonthlyAdjustmentRecord {
@@ -128,15 +129,48 @@ function fullDaysBetweenUtc(fromDateKey: string, toDateKey: string): number {
 }
 
 function buildRateLookup(exchangeRates: ExchangeRateRecord[]) {
-  const sorted = [...exchangeRates]
-    .map((rate) => ({ date: normalizeRateDate(rate.date), arsPerUsd: rate.arsPerUsd }))
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const normalized = exchangeRates
+    .map((rate) => {
+      const date = normalizeRateDate(rate.date);
+      const createdAtMs = rate.createdAt ? Date.parse(rate.createdAt) : Date.parse(`${date}T00:00:00.000Z`);
+      return {
+        date,
+        month: date.slice(0, 7),
+        arsPerUsd: rate.arsPerUsd,
+        createdAtMs: Number.isFinite(createdAtMs) ? createdAtMs : 0
+      };
+    })
+    .filter((rate) => Number.isFinite(rate.arsPerUsd) && rate.arsPerUsd > 0);
+
+  // Keep only the latest rate change inside each month (latest by creation timestamp).
+  const latestByMonth = new Map<string, (typeof normalized)[number]>();
+  for (const rate of normalized) {
+    const previous = latestByMonth.get(rate.month);
+    if (!previous) {
+      latestByMonth.set(rate.month, rate);
+      continue;
+    }
+    if (rate.createdAtMs > previous.createdAtMs || (rate.createdAtMs === previous.createdAtMs && rate.date > previous.date)) {
+      latestByMonth.set(rate.month, rate);
+    }
+  }
+
+  const sorted = [...latestByMonth.values()].sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0));
   const latest = sorted.length > 0 ? sorted[sorted.length - 1].arsPerUsd : appEnv.defaultArsPerUsd;
 
   return {
     sorted,
-    // Product rule: always convert using the newest available rate.
-    getRate(_dateLike: string): number {
+    // Product rule: use the latest rate of the expense month.
+    // If that month has no rate configured, fallback to the closest previous month.
+    getRate(dateLike: string): number {
+      const dateKey = normalizeRateDate(dateLike);
+      const month = dateKey.slice(0, 7);
+      const exact = latestByMonth.get(month);
+      if (exact) return exact.arsPerUsd;
+
+      for (let i = sorted.length - 1; i >= 0; i -= 1) {
+        if (sorted[i].month <= month) return sorted[i].arsPerUsd;
+      }
       return latest;
     }
   };

@@ -127,9 +127,11 @@ interface Expectation {
 }
 
 interface ExchangeRate {
+  id: string;
   date: string;
   arsPerUsd: number;
   source: string | null;
+  createdAt: string;
 }
 
 interface MonthlyAdjustment {
@@ -263,6 +265,10 @@ function toUtcExpenseDateKey(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value.slice(0, 10);
   return toUtcDateKey(date);
+}
+
+function toMonthKeyFromDateLike(value: string): string {
+  return toUtcExpenseDateKey(value).slice(0, 7);
 }
 
 function toLocalExpenseDateKey(value: string): string {
@@ -451,6 +457,7 @@ export function FinanceApp() {
   const [editingExpectationId, setEditingExpectationId] = useState<string | null>(null);
   const [editingAdvancementId, setEditingAdvancementId] = useState<string | null>(null);
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingRateId, setEditingRateId] = useState<string | null>(null);
 
   const [adjustmentDrafts, setAdjustmentDrafts] = useState<Record<string, string>>({});
   const [debouncedAdjustmentDrafts, setDebouncedAdjustmentDrafts] = useState<Record<string, string>>({});
@@ -709,6 +716,39 @@ export function FinanceApp() {
       .slice(0, 20);
   }, [data]);
 
+  const getArsPerUsdForMonth = useMemo(() => {
+    const fallback = data?.projection.currentRateArsPerUsd ?? 1;
+    if (!data || data.exchangeRates.length === 0) {
+      return (_month: string) => fallback;
+    }
+
+    const monthly = [...data.exchangeRates]
+      .map((rate) => ({ month: rate.date.slice(0, 7), arsPerUsd: rate.arsPerUsd }))
+      .sort((a, b) => a.month.localeCompare(b.month));
+
+    const rateByMonth = new Map<string, number>();
+    for (const row of monthly) {
+      rateByMonth.set(row.month, row.arsPerUsd);
+    }
+
+    return (month: string): number => {
+      const exact = rateByMonth.get(month);
+      if (typeof exact === "number" && Number.isFinite(exact) && exact > 0) return exact;
+
+      for (let i = monthly.length - 1; i >= 0; i -= 1) {
+        if (monthly[i].month <= month) return monthly[i].arsPerUsd;
+      }
+      return fallback;
+    };
+  }, [data]);
+
+  const getArsPerUsdForDate = useMemo(() => {
+    return (dateLike: string): number => {
+      const month = toMonthKeyFromDateLike(dateLike);
+      return getArsPerUsdForMonth(month);
+    };
+  }, [getArsPerUsdForMonth]);
+
   const sortedCategories = useMemo(() => {
     if (!data) return [];
     return [...data.categories].sort((a, b) => {
@@ -862,10 +902,11 @@ export function FinanceApp() {
     }
   }
 
-  function formatMoney(usdValue: number) {
+  function formatMoney(usdValue: number, month?: string) {
     if (!data) return "-";
     if (displayCurrency === "USD") return USD_FORMAT.format(usdValue);
-    return ARS_FORMAT.format(usdValue * data.projection.currentRateArsPerUsd);
+    const rate = month ? getArsPerUsdForMonth(month) : data.projection.currentRateArsPerUsd;
+    return ARS_FORMAT.format(usdValue * rate);
   }
 
   function dualCurrencyMetric(usdValue: number) {
@@ -1233,17 +1274,41 @@ export function FinanceApp() {
 
   async function submitRate(event: React.FormEvent) {
     event.preventDefault();
+    const targetMonth = rateForm.date.slice(0, 7);
+    const isEditingPastMonth = Boolean(editingRateId && data && targetMonth < data.projection.currentMonth);
+    if (isEditingPastMonth) {
+      const confirmed = window.confirm(
+        `You are editing a past exchange rate (${targetMonth}). This will recalculate historical values for that month. Continue?`
+      );
+      if (!confirmed) return;
+    }
+
     await runTabAction("settings", async () => {
       await api("/api/exchange-rates", {
-        method: "POST",
+        method: editingRateId ? "PATCH" : "POST",
         body: JSON.stringify({
+          ...(editingRateId ? { id: editingRateId } : {}),
           ...rateForm,
           arsPerUsd: Number(rateForm.arsPerUsd),
           source: "manual"
         })
       });
+      setEditingRateId(null);
       setRateForm((prev) => ({ ...prev, arsPerUsd: "" }));
     });
+  }
+
+  function startEditRate(rate: ExchangeRate) {
+    setEditingRateId(rate.id);
+    setRateForm({
+      date: rate.date,
+      arsPerUsd: String(rate.arsPerUsd)
+    });
+  }
+
+  function cancelEditRate() {
+    setEditingRateId(null);
+    setRateForm((prev) => ({ ...prev, arsPerUsd: "" }));
   }
 
   async function submitPasswordChange(event: React.FormEvent) {
@@ -1423,12 +1488,12 @@ export function FinanceApp() {
   const savings12mUsd =
     (savingsTargetRow?.cumulativeSavingsUsd ?? data.projection.rows[data.projection.rows.length - 1]?.cumulativeSavingsUsd ?? 0) -
     (dashboardCurrentRow?.cumulativeSavingsUsd ?? 0);
+  const currentRate = getArsPerUsdForMonth(data.projection.currentMonth);
 
-  const currentRate = data.projection.currentRateArsPerUsd;
   const expenseUsdByMonthCard = new Map<string, Map<string, number>>();
   for (const expense of data.expenses) {
     const month = toUtcExpenseDateKey(expense.date).slice(0, 7);
-    const usd = expense.currency === "USD" ? expense.amount : expense.amount / currentRate;
+    const usd = expense.currency === "USD" ? expense.amount : expense.amount / getArsPerUsdForDate(expense.date);
     if (!expenseUsdByMonthCard.has(month)) {
       expenseUsdByMonthCard.set(month, new Map<string, number>());
     }
@@ -1438,7 +1503,7 @@ export function FinanceApp() {
 
   const expectedUsdByMonthCard = new Map<string, Map<string, number>>();
   for (const expectation of data.expectations) {
-    const usd = expectation.currency === "USD" ? expectation.amount : expectation.amount / currentRate;
+    const usd = expectation.currency === "USD" ? expectation.amount : expectation.amount / getArsPerUsdForMonth(expectation.month);
     if (!expectedUsdByMonthCard.has(expectation.month)) {
       expectedUsdByMonthCard.set(expectation.month, new Map<string, number>());
     }
@@ -1517,7 +1582,7 @@ export function FinanceApp() {
   for (const expense of data.expenses) {
     const month = toUtcExpenseDateKey(expense.date).slice(0, 7);
     const categoryId = expense.categoryId ?? uncategorizedCategory.id;
-    const usd = expense.currency === "USD" ? expense.amount : expense.amount / currentRate;
+    const usd = expense.currency === "USD" ? expense.amount : expense.amount / getArsPerUsdForDate(expense.date);
     if (!expenseUsdByMonthCategory.has(month)) {
       expenseUsdByMonthCategory.set(month, new Map());
     }
@@ -2224,7 +2289,7 @@ export function FinanceApp() {
                       cards={data.cards}
                       categories={sortedCategories}
                       expenseDisplayMode={expenseDisplayMode}
-                      arsPerUsd={data.projection.currentRateArsPerUsd}
+                      getArsPerUsdForDate={getArsPerUsdForDate}
                       isEditing={editingExpenseId === expense.id}
                       onStartEdit={() => setEditingExpenseId(expense.id)}
                       onCancelEdit={() => setEditingExpenseId(null)}
@@ -2242,7 +2307,7 @@ export function FinanceApp() {
                     cards={data.cards}
                     categories={sortedCategories}
                     expenseDisplayMode={expenseDisplayMode}
-                    arsPerUsd={data.projection.currentRateArsPerUsd}
+                    getArsPerUsdForDate={getArsPerUsdForDate}
                     onSave={updateExpense}
                     onDelete={deleteExpense}
                   />
@@ -2291,10 +2356,10 @@ export function FinanceApp() {
                         {toMonthLabel(row.month)}
                         {row.month === data.projection.currentMonth ? <span className="currentCycleBadge">Current cycle</span> : null}
                       </td>
-                      <td>{formatMoney(row.incomeUsd)}</td>
-                      <td>{formatMoney(row.fixedExpensesUsd)}</td>
-                      <td>{formatMoney(row.cardPaymentUsd)}</td>
-                      <td>{formatMoney(row.advancementImpactUsd)}</td>
+                      <td>{formatMoney(row.incomeUsd, row.month)}</td>
+                      <td>{formatMoney(row.fixedExpensesUsd, row.month)}</td>
+                      <td>{formatMoney(row.cardPaymentUsd, row.month)}</td>
+                      <td>{formatMoney(row.advancementImpactUsd, row.month)}</td>
                       <td>
                         {editable ? (
                           <input
@@ -2308,9 +2373,9 @@ export function FinanceApp() {
                           USD_FORMAT.format(row.previewAdjustmentUsd)
                         )}
                       </td>
-                      <td>{formatMoney(row.totalExpensesUsd)}</td>
-                      <td>{formatMoney(row.previewNetUsd)}</td>
-                      <td>{formatMoney(row.previewSavingsUsd)}</td>
+                      <td>{formatMoney(row.totalExpensesUsd, row.month)}</td>
+                      <td>{formatMoney(row.previewNetUsd, row.month)}</td>
+                      <td>{formatMoney(row.previewSavingsUsd, row.month)}</td>
                       <td>{editable ? <button className="tiny" onClick={() => void saveAdjustment(row.month)}>Save</button> : "-"}</td>
                     </tr>
                   );
@@ -2327,16 +2392,16 @@ export function FinanceApp() {
                       {toMonthLabel(row.month)}
                       {row.month === data.projection.currentMonth ? <span className="currentCycleBadge">Current cycle</span> : null}
                     </h3>
-                    <p className="mobileMain">{formatMoney(row.previewNetUsd)}</p>
+                    <p className="mobileMain">{formatMoney(row.previewNetUsd, row.month)}</p>
                     <p className="subtle">Net for month</p>
                     <details>
                       <summary>Income / Expenses</summary>
-                      <p>Income: {formatMoney(row.incomeUsd)}</p>
-                      <p>Fixed: {formatMoney(row.fixedExpensesUsd)}</p>
-                      <p>Card payment: {formatMoney(row.cardPaymentUsd)}</p>
-                      <p>Advancement: {formatMoney(row.advancementImpactUsd)}</p>
-                      <p>Total expenses: {formatMoney(row.totalExpensesUsd)}</p>
-                      <p>Savings: {formatMoney(row.previewSavingsUsd)}</p>
+                      <p>Income: {formatMoney(row.incomeUsd, row.month)}</p>
+                      <p>Fixed: {formatMoney(row.fixedExpensesUsd, row.month)}</p>
+                      <p>Card payment: {formatMoney(row.cardPaymentUsd, row.month)}</p>
+                      <p>Advancement: {formatMoney(row.advancementImpactUsd, row.month)}</p>
+                      <p>Total expenses: {formatMoney(row.totalExpensesUsd, row.month)}</p>
+                      <p>Savings: {formatMoney(row.previewSavingsUsd, row.month)}</p>
                     </details>
                     {editable ? (
                       <div className="mobileInline">
@@ -2646,18 +2711,27 @@ export function FinanceApp() {
               <form className="formGrid" onSubmit={submitRate}>
                 <input type="date" value={rateForm.date} onChange={(event) => setRateForm((prev) => ({ ...prev, date: event.target.value }))} required />
                 <input type="number" step="0.000001" placeholder="ARS per USD" value={rateForm.arsPerUsd} onChange={(event) => setRateForm((prev) => ({ ...prev, arsPerUsd: event.target.value }))} required />
-                <button type="submit">Save Rate</button>
+                <button type="submit">{editingRateId ? "Update Rate" : "Save Rate"}</button>
+                {editingRateId ? (
+                  <button type="button" className="secondary" onClick={cancelEditRate}>Cancel Edit</button>
+                ) : null}
                 <button type="button" className="secondary" onClick={() => void syncRate()}>Fetch from API</button>
               </form>
+              {editingRateId && rateForm.date.slice(0, 7) < data.projection.currentMonth ? (
+                <p className="subtle fxInlineWarning">
+                  Warning: you are editing a past-month FX value. Historical totals for that month will be recalculated.
+                </p>
+              ) : null}
               <ul className="accordionList">
                 {sortedExchangeRates.map((rate) => (
-                  <details key={rate.date} className="itemAccordion">
+                  <details key={rate.id} className="itemAccordion">
                     <summary>
                       <span>{rate.date}</span>
                       <span className="subtle">{rate.arsPerUsd.toFixed(4)}</span>
                     </summary>
                     <div className="listRow">
                       <span>Source: {rate.source ?? "manual"}</span>
+                      <button type="button" className="secondary" onClick={() => startEditRate(rate)}>Edit</button>
                     </div>
                   </details>
                 ))}
@@ -2685,12 +2759,12 @@ export function FinanceApp() {
   );
 }
 
-function ExpenseRow({ expense, cards, categories, expenseDisplayMode, arsPerUsd, isEditing, onStartEdit, onCancelEdit, onSave, onDelete }: {
+function ExpenseRow({ expense, cards, categories, expenseDisplayMode, getArsPerUsdForDate, isEditing, onStartEdit, onCancelEdit, onSave, onDelete }: {
   expense: Expense;
   cards: Card[];
   categories: ExpenseCategory[];
   expenseDisplayMode: ExpenseDisplayMode;
-  arsPerUsd: number;
+  getArsPerUsdForDate: (dateLike: string) => number;
   isEditing: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
@@ -2698,6 +2772,7 @@ function ExpenseRow({ expense, cards, categories, expenseDisplayMode, arsPerUsd,
   onDelete: (id: string) => Promise<void>;
 }) {
   const [draft, setDraft] = useState<Expense>({ ...expense, date: toLocalExpenseDateKey(expense.date) });
+  const arsPerUsd = getArsPerUsdForDate(expense.date);
   const targetCurrency = expenseDisplayMode === "STORED" ? expense.currency : expenseDisplayMode;
   const convertedAmount =
     targetCurrency === expense.currency
@@ -2775,7 +2850,7 @@ function MobileExpenseCard({
   cards,
   categories,
   expenseDisplayMode,
-  arsPerUsd,
+  getArsPerUsdForDate,
   onSave,
   onDelete
 }: {
@@ -2783,12 +2858,13 @@ function MobileExpenseCard({
   cards: Card[];
   categories: ExpenseCategory[];
   expenseDisplayMode: ExpenseDisplayMode;
-  arsPerUsd: number;
+  getArsPerUsdForDate: (dateLike: string) => number;
   onSave: (expense: Expense, originalExpense: Expense) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState<Expense>({ ...expense, date: toLocalExpenseDateKey(expense.date) });
+  const arsPerUsd = getArsPerUsdForDate(expense.date);
   const targetCurrency = expenseDisplayMode === "STORED" ? expense.currency : expenseDisplayMode;
   const convertedAmount =
     targetCurrency === expense.currency

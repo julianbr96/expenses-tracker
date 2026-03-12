@@ -69,12 +69,22 @@ export async function GET(request: Request) {
     }),
     prisma.userExchangeRate.findMany({
       where: { userId: auth.userId },
-      orderBy: { date: "desc" },
-      take: appEnv.exchangeRatesHistoryLimit
+      orderBy: [{ createdAt: "desc" }, { date: "desc" }]
     }),
     prisma.monthlyAdjustment.findMany({ where: { userId: auth.userId }, orderBy: { month: "asc" } }),
     prisma.advancement.findMany({ where: { userId: auth.userId }, orderBy: [{ month: "asc" }, { createdAt: "asc" }] })
   ]);
+
+  const latestRatesByMonth = new Map<string, (typeof exchangeRates)[number]>();
+  for (const row of exchangeRates) {
+    const month = row.date.toISOString().slice(0, 7);
+    if (!latestRatesByMonth.has(month)) {
+      latestRatesByMonth.set(month, row);
+    }
+  }
+  const monthlyExchangeRates = [...latestRatesByMonth.values()]
+    .sort((a, b) => b.date.toISOString().slice(0, 10).localeCompare(a.date.toISOString().slice(0, 10)))
+    .slice(0, appEnv.exchangeRatesHistoryLimit);
 
   return NextResponse.json({
     currentUser,
@@ -91,9 +101,10 @@ export async function GET(request: Request) {
     expectations: expectations.map((row) => ({ ...row, amount: Number(row.amount) })),
     monthlyAdjustments: monthlyAdjustments.map((row) => ({ ...row, amount: Number(row.amount) })),
     advancements: advancements.map((row) => ({ ...row, amount: Number(row.amount) })),
-    exchangeRates: exchangeRates.map((row) => ({
+    exchangeRates: monthlyExchangeRates.map((row) => ({
       ...row,
       date: row.date.toISOString().slice(0, 10),
+      createdAt: row.createdAt.toISOString(),
       arsPerUsd: Number(row.arsPerUsd)
     }))
   });

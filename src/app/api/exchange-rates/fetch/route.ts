@@ -157,22 +157,12 @@ async function syncExternalRate(userId: string) {
   const dateKey = parsePayloadDate(payload);
   const date = new Date(`${dateKey}T00:00:00.000Z`);
 
-  const row = await prisma.userExchangeRate.upsert({
-    where: {
-      userId_date: {
-        userId,
-        date
-      }
-    },
-    create: {
+  const row = await prisma.userExchangeRate.create({
+    data: {
       date,
       arsPerUsd,
       source,
       userId
-    },
-    update: {
-      arsPerUsd,
-      source
     }
   });
 

@@ -15,7 +15,7 @@ export async function loadModelForProjection(userId?: string) {
     userId
       ? prisma.userExchangeRate.findMany({
           where: { userId },
-          orderBy: { date: "asc" }
+          orderBy: [{ createdAt: "asc" }, { date: "asc" }]
         })
       : Promise.resolve([]),
     prisma.monthlyAdjustment.findMany({ where: userScoped, orderBy: { month: "asc" } }),
@@ -61,7 +61,8 @@ export async function loadModelForProjection(userId?: string) {
     })),
     exchangeRates: exchangeRates.map((rate) => ({
       date: toDateOnly(rate.date),
-      arsPerUsd: decimalToNumber(rate.arsPerUsd)
+      arsPerUsd: decimalToNumber(rate.arsPerUsd),
+      createdAt: rate.createdAt.toISOString()
     })),
     monthlyAdjustments: monthlyAdjustments.map((row) => ({
       month: row.month,
