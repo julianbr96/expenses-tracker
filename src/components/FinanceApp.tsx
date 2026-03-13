@@ -1471,7 +1471,7 @@ export function FinanceApp() {
   }
 
   const trackerRemainingUsdTotal = data.projection.cardTracker.reduce(
-    (acc, row) => acc + Math.max(row.remainingExpectedUsd, 0),
+    (acc, row) => (row.expectedCycleUsd > 0 ? acc + row.remainingExpectedUsd : acc),
     0
   );
   const trackerRemainingMetric = dualCurrencyMetric(trackerRemainingUsdTotal);

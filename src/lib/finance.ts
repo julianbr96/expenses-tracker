@@ -365,10 +365,10 @@ export function generateProjection(input: ProjectionInput): ProjectionOutput {
       cardName: card.name,
       currentCycleUsd: round2(actual),
       expectedCycleUsd: round2(expected),
-      remainingExpectedUsd: round2(Math.max(expected - actual, 0)),
+      remainingExpectedUsd: round2(expected - actual),
       currentCycleArs: round2(actual * currentRateArsPerUsd),
       expectedCycleArs: round2(expected * currentRateArsPerUsd),
-      remainingExpectedArs: round2(Math.max(expected - actual, 0) * currentRateArsPerUsd),
+      remainingExpectedArs: round2((expected - actual) * currentRateArsPerUsd),
       lastExpenseDate: lastExpense ? lastExpense.date : null
     };
   });
