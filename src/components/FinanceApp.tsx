@@ -468,7 +468,7 @@ export function FinanceApp() {
 
   const [expenseFilterCard, setExpenseFilterCard] = useState<string>("all");
   const [expenseFilterCategory, setExpenseFilterCategory] = useState<string>("all");
-  const [expenseTimeFilter, setExpenseTimeFilter] = useState<ExpenseTimeFilter>("CURRENT_WEEK");
+  const [expenseTimeFilter, setExpenseTimeFilter] = useState<ExpenseTimeFilter>("LAST_7_DAYS");
   const [expenseCustomMonth, setExpenseCustomMonth] = useState<string>(new Date().toISOString().slice(0, 7));
   const [expenseDisplayMode, setExpenseDisplayMode] = useState<ExpenseDisplayMode>("STORED");
   const [expenseDateTouched, setExpenseDateTouched] = useState(false);
